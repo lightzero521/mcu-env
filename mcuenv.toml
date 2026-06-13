@@ -1,0 +1,22 @@
+# MCU development environment configuration
+# Paths are relative to MCUENV_ROOT unless absolute.
+
+[env]
+root_var = "MCUENV_ROOT"
+
+[paths]
+toolchain = "tools/arm-gnu-toolchain/bin"
+cmake = "tools/cmake/bin"
+ninja = "tools/ninja/bin"
+openocd = "tools/openocd/bin"
+openocd_scripts = "tools/openocd/openocd/scripts"
+
+[toolchain]
+prefix = "arm-none-eabi-"
+cmake_toolchain_file = "cmake/toolchain-arm-none-eabi.cmake"
+
+[build]
+generator = "Ninja"
+
+[flash]
+default_interface = "stlink"

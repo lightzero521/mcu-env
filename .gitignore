@@ -1,0 +1,24 @@
+# Bundled toolchains and binaries (large; install locally)
+tools/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+.venv/
+venv/
+
+# Firmware project build output (when developing inside this repo)
+build/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Local overrides
+mcuenv.local.toml
