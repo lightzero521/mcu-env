@@ -1,8 +1,12 @@
-"""Target presets for STM32 and GD32."""
+"""Target presets loaded from the SQLite chip registry."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+
+from mcuenv.config import detect_root, load_global_config
+from mcuenv.registry_db import RegistryPaths, get_chip, list_chips, resolve_registry_paths
 
 
 @dataclass(frozen=True)
@@ -10,92 +14,59 @@ class TargetPreset:
     name: str
     family: str
     mcu: str
+    series: str
     cpu: str
+    probe: str
+    backend: str
+    jlink_device: str
+    openocd_interface: str
     openocd_target: str
-    openocd_interface: str = "stlink"
+    pyocd_target: str
     note: str = ""
 
 
-TARGETS: dict[str, TargetPreset] = {
-    "stm32f103c8": TargetPreset(
-        name="stm32f103c8",
-        family="stm32",
-        mcu="STM32F103C8",
-        cpu="cortex-m3",
-        openocd_target="stm32f1x",
-    ),
-    "stm32f303cb": TargetPreset(
-        name="stm32f303cb",
-        family="stm32",
-        mcu="STM32F303CB",
-        cpu="cortex-m4",
-        openocd_target="stm32f3x",
-    ),
-    "stm32f407vg": TargetPreset(
-        name="stm32f407vg",
-        family="stm32",
-        mcu="STM32F407VG",
-        cpu="cortex-m4",
-        openocd_target="stm32f4x",
-    ),
-    "stm32g431cb": TargetPreset(
-        name="stm32g431cb",
-        family="stm32",
-        mcu="STM32G431CB",
-        cpu="cortex-m4",
-        openocd_target="stm32g4x",
-    ),
-    "stm32h743zi": TargetPreset(
-        name="stm32h743zi",
-        family="stm32",
-        mcu="STM32H743ZI",
-        cpu="cortex-m7",
-        openocd_target="stm32h7x",
-    ),
-    "gd32f103c8": TargetPreset(
-        name="gd32f103c8",
-        family="gd32",
-        mcu="GD32F103C8",
-        cpu="cortex-m3",
-        openocd_target="stm32f1x",
-        note="GD32F1 is debugged with the STM32F1 OpenOCD target",
-    ),
-    "gd32f303cc": TargetPreset(
-        name="gd32f303cc",
-        family="gd32",
-        mcu="GD32F303CC",
-        cpu="cortex-m4",
-        openocd_target="stm32f2x",
-        note="GD32F30x is commonly mapped to the STM32F2 OpenOCD target",
-    ),
-    "gd32f450ik": TargetPreset(
-        name="gd32f450ik",
-        family="gd32",
-        mcu="GD32F450IK",
-        cpu="cortex-m4",
-        openocd_target="stm32f4x",
-        note="GD32F4 is commonly mapped to the STM32F4 OpenOCD target",
-    ),
-    "gd32e230c8": TargetPreset(
-        name="gd32e230c8",
-        family="gd32",
-        mcu="GD32E230C8",
-        cpu="cortex-m23",
-        openocd_target="gd32e23x",
-    ),
-}
+def _registry_paths(root: Path | None = None) -> RegistryPaths:
+    env_root = detect_root(root)
+    config = load_global_config(env_root)
+    return resolve_registry_paths(env_root, config.registry_database)
 
 
-def get_target(name: str) -> TargetPreset:
-    key = name.lower()
-    if key not in TARGETS:
-        known = ", ".join(sorted(TARGETS))
+def _chip_to_preset(chip: dict) -> TargetPreset:
+    return TargetPreset(
+        name=chip["id"],
+        family=chip["family"],
+        mcu=chip["mcu"],
+        series=chip.get("series", ""),
+        cpu=chip.get("cpu", ""),
+        probe=chip.get("probe", "stlink"),
+        backend=chip.get("backend", "openocd"),
+        jlink_device=chip.get("jlink_device", ""),
+        openocd_interface=chip.get("openocd_interface", "stlink"),
+        openocd_target=chip.get("openocd_target", ""),
+        pyocd_target=chip.get("pyocd_target", ""),
+        note=chip.get("note", ""),
+    )
+
+
+def get_target(
+    name: str,
+    *,
+    paths: RegistryPaths | None = None,
+    root: Path | None = None,
+) -> TargetPreset:
+    registry = paths or _registry_paths(root)
+    chip = get_chip(registry, name)
+    if chip is None:
+        known = ", ".join(preset.name for preset in list_targets(paths=registry))
         raise KeyError(f"Unknown target '{name}'. Known targets: {known}")
-    return TARGETS[key]
+    return _chip_to_preset(chip)
 
 
-def list_targets(family: str | None = None) -> list[TargetPreset]:
-    presets = list(TARGETS.values())
-    if family is None:
-        return presets
-    return [preset for preset in presets if preset.family == family.lower()]
+def list_targets(
+    family: str | None = None,
+    *,
+    paths: RegistryPaths | None = None,
+    root: Path | None = None,
+) -> list[TargetPreset]:
+    registry = paths or _registry_paths(root)
+    return [_chip_to_preset(chip) for chip in list_chips(registry, family=family)]

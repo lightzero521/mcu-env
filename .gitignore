@@ -1,6 +1,16 @@
 # Bundled toolchains and binaries (large; install locally)
 tools/
 
+# Vendor SDK packages (large; install locally)
+packages/**/*
+!packages/**/
+!packages/**/.gitkeep
+
+# Chip manuals and datasheets (large; install locally)
+manuals/**/*
+!manuals/**/
+!manuals/**/.gitkeep
+
 # Python
 __pycache__/
 *.py[cod]
@@ -22,3 +32,6 @@ Thumbs.db
 
 # Local overrides
 mcuenv.local.toml
+
+# SQLite registry database
+data/*.db

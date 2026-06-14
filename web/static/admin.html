@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>mcuenv Registry</title>
+  <style>
+    :root { color-scheme: light dark; font-family: Segoe UI, sans-serif; }
+    body { margin: 0; background: #111; color: #eee; }
+    header { padding: 16px 24px; border-bottom: 1px solid #333; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    main { padding: 20px 24px; }
+    button, input, select, textarea { background: #1d1d1d; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 8px 10px; }
+    button { cursor: pointer; }
+    button.primary { background: #1f6f43; border-color: #2f8f57; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+    .tabs button.active { background: #2f8f57; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border-bottom: 1px solid #333; padding: 8px; text-align: left; vertical-align: top; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-top: 12px; }
+    .status-installed { color: #7dffb3; }
+    .status-missing { color: #ff9d9d; }
+    #summary { color: #aaa; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>mcuenv Registry</strong>
+    <span id="summary"></span>
+    <button class="primary" onclick="syncStatus()">扫描文件状态</button>
+    <button onclick="exportToml()">导出 TOML</button>
+    <button onclick="importToml()">从 TOML 重新导入</button>
+  </header>
+  <main>
+    <div class="tabs">
+      <button class="active" data-tab="chips">芯片</button>
+      <button data-tab="packages">SDK 包</button>
+      <button data-tab="manuals">手册</button>
+    </div>
+
+    <section id="panel-chips" class="panel active">
+      <div class="toolbar"><button class="primary" onclick="resetChipForm()">新建芯片</button></div>
+      <form id="chip-form" class="form-grid" onsubmit="saveChip(event)">
+        <input name="id" placeholder="id，例如 stm32f103c8t6" required />
+        <input name="family" placeholder="family，例如 stm32" required />
+        <input name="mcu" placeholder="mcu，例如 STM32F103C8T6" required />
+        <input name="series" placeholder="series，例如 f1" />
+        <input name="cpu" placeholder="cpu，例如 cortex-m3" />
+        <select name="probe"><option value="stlink">stlink</option><option value="jlink">jlink</option><option value="daplink">daplink</option></select>
+        <select name="backend"><option value="openocd">openocd</option><option value="jlink">jlink</option><option value="pyocd">pyocd</option></select>
+        <input name="jlink_device" placeholder="jlink_device" />
+        <input name="openocd_interface" placeholder="openocd_interface，例如 stlink" />
+        <input name="openocd_target" placeholder="openocd_target，例如 stm32f1x" />
+        <input name="pyocd_target" placeholder="pyocd_target，例如 stm32f103c8" />
+        <input name="note" placeholder="note" />
+        <button class="primary" type="submit">保存芯片</button>
+      </form>
+      <table id="chips-table"><thead><tr><th>ID</th><th>Family</th><th>MCU</th><th>CPU</th><th>Backend</th><th>Probe</th><th>操作</th></tr></thead><tbody></tbody></table>
+    </section>
+
+    <section id="panel-packages" class="panel">
+      <div class="toolbar"><button class="primary" onclick="resetPackageForm()">新建 SDK 包</button></div>
+      <form id="package-form" class="form-grid" onsubmit="savePackage(event)">
+        <input name="id" placeholder="id，例如 stm32f1-hal" required />
+        <input name="family" placeholder="family" required />
+        <input name="title" placeholder="title" />
+        <input name="path" placeholder="path，例如 packages/stm32/stm32f1-hal" required />
+        <select name="status"><option value="missing">missing</option><option value="installed">installed</option></select>
+        <input name="targets" placeholder="targets，逗号分隔" />
+        <textarea name="description" placeholder="description" rows="2"></textarea>
+        <button class="primary" type="submit">保存 SDK 包</button>
+      </form>
+      <table id="packages-table"><thead><tr><th>ID</th><th>Title</th><th>Path</th><th>Status</th><th>Targets</th><th>操作</th></tr></thead><tbody></tbody></table>
+    </section>
+
+    <section id="panel-manuals" class="panel">
+      <div class="toolbar"><button class="primary" onclick="resetManualForm()">新建手册</button></div>
+      <form id="manual-form" class="form-grid" onsubmit="saveManual(event)">
+        <input name="id" placeholder="id，例如 stm32f103-reference" required />
+        <input name="family" placeholder="family" required />
+        <input name="series" placeholder="series" />
+        <input name="target" placeholder="target" />
+        <input name="title" placeholder="title" />
+        <input name="path" placeholder="path，例如 manuals/stm32/f1/reference_manual.pdf" required />
+        <select name="status"><option value="missing">missing</option><option value="installed">installed</option></select>
+        <select name="kind"><option value="reference">reference</option><option value="datasheet">datasheet</option></select>
+        <button class="primary" type="submit">保存手册</button>
+      </form>
+      <table id="manuals-table"><thead><tr><th>ID</th><th>Title</th><th>Path</th><th>Status</th><th>Kind</th><th>操作</th></tr></thead><tbody></tbody></table>
+    </section>
+  </main>
+
+  <script>
+    const state = { editing: { chips: null, packages: null, manuals: null } };
+
+    document.querySelectorAll('.tabs button').forEach((button) => {
+      button.addEventListener('click', () => {
+        document.querySelectorAll('.tabs button').forEach((item) => item.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach((item) => item.classList.remove('active'));
+        button.classList.add('active');
+        document.getElementById(`panel-${button.dataset.tab}`).classList.add('active');
+      });
+    });
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options,
+      });
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(detail || response.statusText);
+      }
+      return response.headers.get('content-type')?.includes('application/json') ? response.json() : response.text();
+    }
+
+    function statusClass(status) {
+      return status === 'installed' ? 'status-installed' : 'status-missing';
+    }
+
+    async function loadAll() {
+      const [summary, chips, packages, manuals] = await Promise.all([
+        api('/api/registry/summary'),
+        api('/api/chips'),
+        api('/api/packages'),
+        api('/api/manuals'),
+      ]);
+      document.getElementById('summary').textContent =
+        `DB: ${summary.database} | 芯片 ${summary.chips} | SDK ${summary.packages} | 手册 ${summary.manuals}`;
+      renderChips(chips);
+      renderPackages(packages);
+      renderManuals(manuals);
+    }
+
+    function renderChips(rows) {
+      const tbody = document.querySelector('#chips-table tbody');
+      tbody.innerHTML = rows.map((row) => `
+        <tr>
+          <td>${row.id}</td><td>${row.family}</td><td>${row.mcu}</td><td>${row.cpu}</td>
+          <td>${row.backend}</td><td>${row.probe}</td>
+          <td><button onclick='editChip(${JSON.stringify(row)})'>编辑</button> <button onclick="deleteChip('${row.id}')">删除</button></td>
+        </tr>`).join('');
+    }
+
+    function renderPackages(rows) {
+      const tbody = document.querySelector('#packages-table tbody');
+      tbody.innerHTML = rows.map((row) => `
+        <tr>
+          <td>${row.id}</td><td>${row.title}</td><td>${row.path}</td>
+          <td class="${statusClass(row.status)}">${row.status}</td><td>${(row.targets || []).join(', ')}</td>
+          <td><button onclick='editPackage(${JSON.stringify(row)})'>编辑</button> <button onclick="deletePackage('${row.id}')">删除</button></td>
+        </tr>`).join('');
+    }
+
+    function renderManuals(rows) {
+      const tbody = document.querySelector('#manuals-table tbody');
+      tbody.innerHTML = rows.map((row) => `
+        <tr>
+          <td>${row.id}</td><td>${row.title}</td><td>${row.path}</td>
+          <td class="${statusClass(row.status)}">${row.status}</td><td>${row.kind}</td>
+          <td><button onclick='editManual(${JSON.stringify(row)})'>编辑</button> <button onclick="deleteManual('${row.id}')">删除</button></td>
+        </tr>`).join('');
+    }
+
+    function fillForm(form, data) {
+      for (const element of form.elements) {
+        if (!element.name) continue;
+        if (element.name === 'targets') {
+          element.value = (data.targets || []).join(', ');
+        } else {
+          element.value = data[element.name] ?? '';
+        }
+      }
+    }
+
+    function resetChipForm() { state.editing.chips = null; fillForm(document.getElementById('chip-form'), {}); }
+    function resetPackageForm() { state.editing.packages = null; fillForm(document.getElementById('package-form'), {}); }
+    function resetManualForm() { state.editing.manuals = null; fillForm(document.getElementById('manual-form'), {}); }
+    function editChip(row) { state.editing.chips = row.id; fillForm(document.getElementById('chip-form'), row); }
+    function editPackage(row) { state.editing.packages = row.id; fillForm(document.getElementById('package-form'), row); }
+    function editManual(row) { state.editing.manuals = row.id; fillForm(document.getElementById('manual-form'), row); }
+
+    async function saveChip(event) {
+      event.preventDefault();
+      const form = event.target;
+      const payload = Object.fromEntries(new FormData(form));
+      const method = state.editing.chips ? 'PUT' : 'POST';
+      const url = state.editing.chips ? `/api/chips/${state.editing.chips}` : '/api/chips';
+      await api(url, { method, body: JSON.stringify(payload) });
+      resetChipForm();
+      await loadAll();
+    }
+
+    async function savePackage(event) {
+      event.preventDefault();
+      const form = event.target;
+      const payload = Object.fromEntries(new FormData(form));
+      payload.targets = payload.targets ? payload.targets.split(',').map((item) => item.trim()).filter(Boolean) : [];
+      const method = state.editing.packages ? 'PUT' : 'POST';
+      const url = state.editing.packages ? `/api/packages/${state.editing.packages}` : '/api/packages';
+      await api(url, { method, body: JSON.stringify(payload) });
+      resetPackageForm();
+      await loadAll();
+    }
+
+    async function saveManual(event) {
+      event.preventDefault();
+      const form = event.target;
+      const payload = Object.fromEntries(new FormData(form));
+      const method = state.editing.manuals ? 'PUT' : 'POST';
+      const url = state.editing.manuals ? `/api/manuals/${state.editing.manuals}` : '/api/manuals';
+      await api(url, { method, body: JSON.stringify(payload) });
+      resetManualForm();
+      await loadAll();
+    }
+
+    async function deleteChip(id) { await api(`/api/chips/${id}`, { method: 'DELETE' }); await loadAll(); }
+    async function deletePackage(id) { await api(`/api/packages/${id}`, { method: 'DELETE' }); await loadAll(); }
+    async function deleteManual(id) { await api(`/api/manuals/${id}`, { method: 'DELETE' }); await loadAll(); }
+    async function syncStatus() { await api('/api/registry/sync-status', { method: 'POST' }); await loadAll(); }
+    async function exportToml() { await api('/api/registry/export-toml', { method: 'POST' }); alert('已导出 packages/manuals 到 registry/*.toml'); }
+    async function importToml() { await api('/api/registry/import-toml', { method: 'POST' }); await loadAll(); alert('已从 packages/manuals TOML 重新导入'); }
+
+    loadAll().catch((error) => alert(error.message));
+  </script>
+</body>
+</html>

@@ -10,13 +10,22 @@ cmake = "tools/cmake/bin"
 ninja = "tools/ninja/bin"
 openocd = "tools/openocd/bin"
 openocd_scripts = "tools/openocd/openocd/scripts"
+pyocd = "tools/pyocd"
+registry = "registry"
+packages = "packages"
+manuals = "manuals"
 
 [toolchain]
-prefix = "arm-none-eabi-"
-cmake_toolchain_file = "cmake/toolchain-arm-none-eabi.cmake"
+prefix = "arm-none-eabi-"  # 保留字段；编译器 triplet 见 cmake/toolchain-base-*.cmake
+cmake_toolchain_file = "cmake/toolchain-arm-none-eabi.cmake"  # fallback when cpu is unknown
 
 [build]
 generator = "Ninja"
 
 [flash]
 default_interface = "stlink"
+default_probe = "stlink"
+default_backend = "openocd"
+
+[registry]
+database = "data/registry.db"

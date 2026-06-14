@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 from mcuenv.config import load_global_config
 from mcuenv.util import exe_name, is_windows
+
+MANAGED_ENV_VARS = (
+    "OPENOCD_SCRIPTS",
+    "CMAKE_TOOLCHAIN_FILE",
+)
 
 
 @dataclass(frozen=True)
@@ -17,6 +23,7 @@ class ToolPaths:
     ninja: Path
     openocd: Path
     openocd_scripts: Path
+    pyocd: Path | None = None
 
 
 class EnvManager:
@@ -28,80 +35,87 @@ class EnvManager:
             ninja=self.config.paths["ninja"],
             openocd=self.config.paths["openocd"],
             openocd_scripts=self.config.paths["openocd_scripts"],
+            pyocd=self.config.paths.get("pyocd"),
         )
 
     @property
     def root(self) -> Path:
         return self.config.root
 
+    @property
+    def bin_dir(self) -> Path:
+        return self.root / "bin"
+
     def path_entries(self) -> list[Path]:
-        return [
-            self.tools.toolchain,
-            self.tools.cmake,
-            self.tools.ninja,
-            self.tools.openocd,
-        ]
-
-    def as_dict(self) -> dict[str, str]:
-        prefix = self.config.toolchain_prefix.rstrip("-")
-        if not prefix.endswith("-"):
-            prefix = f"{prefix}-"
-
-        env = os.environ.copy()
-        env["MCUENV_ROOT"] = str(self.root)
-        env["OPENOCD_SCRIPTS"] = str(self.tools.openocd_scripts)
-        env["CMAKE_TOOLCHAIN_FILE"] = str(self.config.cmake_toolchain_file)
-        env["CROSS_COMPILE"] = prefix
-        env["CC"] = f"{prefix}gcc"
-        env["CXX"] = f"{prefix}g++"
-        env["AR"] = f"{prefix}ar"
-        env["OBJCOPY"] = f"{prefix}objcopy"
-        env["SIZE"] = f"{prefix}size"
-        env["PATH"] = os.pathsep.join(
-            [*(str(path) for path in self.path_entries()), env.get("PATH", "")]
+        entries = [self.bin_dir]
+        entries.extend(
+            [
+                self.tools.toolchain,
+                self.tools.cmake,
+                self.tools.ninja,
+                self.tools.openocd,
+            ]
         )
-        return env
+        if self.tools.pyocd is not None:
+            entries.append(self.tools.pyocd)
+        return entries
+
+    def mcuenv_env_values(self) -> dict[str, str]:
+        return {
+            "MCUENV_ROOT": str(self.root),
+            "OPENOCD_SCRIPTS": str(self.tools.openocd_scripts),
+            "CMAKE_TOOLCHAIN_FILE": str(self.config.cmake_toolchain_file),
+        }
 
     def export_lines(self, fmt: str) -> list[str]:
-        env = self.as_dict()
-        root = env["MCUENV_ROOT"]
+        values = self.mcuenv_env_values()
+        root = values["MCUENV_ROOT"]
+        path_prefix = os.pathsep.join(str(path) for path in self.path_entries())
 
         if fmt in {"ps1", "powershell"}:
-            return [
-                f'$env:MCUENV_ROOT = "{root}"',
-                f'$env:OPENOCD_SCRIPTS = "{env["OPENOCD_SCRIPTS"]}"',
-                f'$env:CMAKE_TOOLCHAIN_FILE = "{env["CMAKE_TOOLCHAIN_FILE"]}"',
-                f'$env:CROSS_COMPILE = "{env["CROSS_COMPILE"]}"',
-                f'$env:CC = "{env["CC"]}"',
-                f'$env:CXX = "{env["CXX"]}"',
-                f'$env:PATH = "{os.pathsep.join(str(path) for path in self.path_entries())};$env:PATH"',
-            ]
+            lines = [f'$env:MCUENV_ROOT = "{root}"']
+            for name in MANAGED_ENV_VARS:
+                lines.append(f'$env:{name} = "{values[name]}"')
+            lines.append(f'$env:PATH = "{path_prefix};$env:PATH"')
+            return lines
 
         if fmt in {"bash", "sh"}:
-            path_entries = os.pathsep.join(str(path) for path in self.path_entries())
-            return [
-                f'export MCUENV_ROOT="{root}"',
-                f'export OPENOCD_SCRIPTS="{env["OPENOCD_SCRIPTS"]}"',
-                f'export CMAKE_TOOLCHAIN_FILE="{env["CMAKE_TOOLCHAIN_FILE"]}"',
-                f'export CROSS_COMPILE="{env["CROSS_COMPILE"]}"',
-                f'export CC="{env["CC"]}"',
-                f'export CXX="{env["CXX"]}"',
-                f'export PATH="{path_entries}:$PATH"',
-            ]
+            lines = [f'export MCUENV_ROOT="{root}"']
+            for name in MANAGED_ENV_VARS:
+                lines.append(f'export {name}="{values[name]}"')
+            lines.append(f'export PATH="{path_prefix}:$PATH"')
+            return lines
 
         raise ValueError(f"Unsupported export format: {fmt}")
+
+    @staticmethod
+    def require_active_shell(*, require_cross_compiler: bool = False) -> str | None:
+        if os.environ.get("MCUENV_ACTIVE") != "1":
+            return (
+                "mcuenv is not active. Run 'mcuenv-on' "
+                "(or source export.ps1 / export.sh) first."
+            )
+        if require_cross_compiler and shutil.which("arm-none-eabi-gcc") is None:
+            return (
+                "arm-none-eabi-gcc was not found on PATH. "
+                "Run 'mcuenv-on' to prepend toolchain paths from mcuenv.toml."
+            )
+        return None
 
     def tool_binary(self, name: str) -> Path:
         directory_map = {
             "cmake": self.tools.cmake,
             "ninja": self.tools.ninja,
             "openocd": self.tools.openocd,
+            "pyocd": self.tools.pyocd,
             "arm-none-eabi-gcc": self.tools.toolchain,
             "arm-none-eabi-gdb": self.tools.toolchain,
             "arm-none-eabi-objcopy": self.tools.toolchain,
             "arm-none-eabi-size": self.tools.toolchain,
         }
         directory = directory_map.get(name, self.tools.toolchain)
+        if directory is None:
+            raise FileNotFoundError(f"Tool path is not configured: {name}")
         candidate = directory / exe_name(name)
         if candidate.is_file():
             return candidate
@@ -116,5 +130,7 @@ class EnvManager:
             "ninja_dir": str(self.tools.ninja),
             "openocd_dir": str(self.tools.openocd),
             "openocd_scripts": str(self.tools.openocd_scripts),
+            "pyocd_dir": str(self.tools.pyocd) if self.tools.pyocd else "(not configured)",
             "cmake_toolchain_file": str(self.config.cmake_toolchain_file),
+            "bin_dir": str(self.bin_dir),
         }

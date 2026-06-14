@@ -8,16 +8,30 @@ from pathlib import Path
 
 from mcuenv import __version__
 from mcuenv.build import build_project, clean_project
-from mcuenv.config import find_project_root, load_project_config, write_project_config
+from mcuenv.config import apply_target_defaults, find_project_root, load_project_config, write_project_config
 from mcuenv.doctor import print_doctor_report, run_doctor
 from mcuenv.env import EnvManager
 from mcuenv.flash import describe_flash_settings, flash_project
+from mcuenv.prompt import format_prompt_bash, format_prompt_segment
+from mcuenv.registry_db import (
+    export_to_toml,
+    init_registry,
+    resolve_registry_paths,
+    sync_resource_status,
+)
+from mcuenv.shell import deactivate_lines
+from mcuenv.shell_init import run_shell_init
 from mcuenv.targets import get_target, list_targets
 from mcuenv.util import is_windows, require_python_version
+from mcuenv.web_app import run_web_server
 
 
 def _default_export_format() -> str:
     return "ps1" if is_windows() else "bash"
+
+
+def _registry_paths(env: EnvManager):
+    return resolve_registry_paths(env.root, env.config.registry_database)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -52,6 +66,28 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["ps1", "powershell", "bash", "sh"],
         default=_default_export_format(),
         help="Shell export format",
+    )
+
+    deactivate_parser = subparsers.add_parser(
+        "deactivate",
+        help="Print shell commands to leave the activated environment",
+    )
+    deactivate_parser.add_argument(
+        "--format",
+        choices=["ps1", "powershell", "bash", "sh"],
+        default=_default_export_format(),
+        help="Shell deactivate format",
+    )
+
+    prompt_segment_parser = subparsers.add_parser(
+        "prompt-segment",
+        help="Print the colored prompt prefix for the current shell",
+    )
+    prompt_segment_parser.add_argument(
+        "--format",
+        choices=["ps1", "powershell", "bash", "sh"],
+        default=_default_export_format(),
+        help="Shell prompt format",
     )
 
     list_targets_parser = subparsers.add_parser(
@@ -98,7 +134,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Project directory (default: auto-detect)",
     )
 
-    flash_parser = subparsers.add_parser("flash", help="Flash firmware with OpenOCD")
+    flash_parser = subparsers.add_parser("flash", help="Flash firmware via configured backend")
     flash_parser.add_argument(
         "--project-dir",
         type=Path,
@@ -123,6 +159,61 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Firmware ELF path override",
     )
 
+    shell_parser = subparsers.add_parser(
+        "shell",
+        help="Shell integration helpers",
+    )
+    shell_subparsers = shell_parser.add_subparsers(dest="shell_command", required=True)
+
+    shell_init_parser = shell_subparsers.add_parser(
+        "init",
+        help="Generate or install mcuenv-on shell helper",
+    )
+    shell_init_parser.add_argument(
+        "--format",
+        choices=["ps1", "powershell", "bash", "sh", "all"],
+        default="all" if not is_windows() else "ps1",
+        help="Shell profile format to generate or install",
+    )
+    shell_init_parser.add_argument(
+        "--install",
+        action="store_true",
+        help="Write helpers into the user's shell profile",
+    )
+
+    registry_parser = subparsers.add_parser(
+        "registry",
+        help="Manage chip/SDK/manual registry",
+    )
+    registry_subparsers = registry_parser.add_subparsers(
+        dest="registry_command",
+        required=True,
+    )
+    registry_subparsers.add_parser(
+        "init",
+        help="Initialize SQLite database and seed default chips",
+    )
+    registry_subparsers.add_parser(
+        "export",
+        help="Export packages/manuals registry to registry/*.toml",
+    )
+    registry_subparsers.add_parser(
+        "sync-status",
+        help="Scan packages/manuals paths and update installed/missing status",
+    )
+
+    web_parser = subparsers.add_parser(
+        "web",
+        help="Run registry web backend",
+    )
+    web_subparsers = web_parser.add_subparsers(dest="web_command", required=True)
+    web_serve_parser = web_subparsers.add_parser(
+        "serve",
+        help="Start SQLite-backed registry admin web server",
+    )
+    web_serve_parser.add_argument("--host", default="127.0.0.1")
+    web_serve_parser.add_argument("--port", type=int, default=7654)
+
     return parser
 
 
@@ -133,24 +224,24 @@ def _print_env_info(env: EnvManager) -> int:
     return 0
 
 
-def _print_targets(family: str | None) -> int:
-    for preset in list_targets(family):
+def _print_targets(env: EnvManager, family: str | None) -> int:
+    paths = _registry_paths(env)
+    for preset in list_targets(family, paths=paths):
         note = f" ({preset.note})" if preset.note else ""
         print(
-            f"{preset.name:16} {preset.family:5} {preset.mcu:12} "
-            f"{preset.cpu:12} openocd={preset.openocd_target}{note}"
+            f"{preset.name:18} {preset.family:5} {preset.mcu:16} "
+            f"{preset.cpu:12} {preset.backend:7} probe={preset.probe}{note}"
         )
     return 0
 
 
 def _cmd_set_target(args: argparse.Namespace, env: EnvManager) -> int:
-    preset = get_target(args.target)
+    paths = _registry_paths(env)
+    preset = get_target(args.target, paths=paths)
     project_root = find_project_root(args.project_dir)
     project = load_project_config(project_root)
     project.root = project_root
-    project.target = preset.name
-    project.openocd_target = preset.openocd_target
-    project.openocd_interface = preset.openocd_interface
+    apply_target_defaults(project, preset)
     if args.name:
         project.name = args.name
     elif project.name == "firmware" and (project_root / "CMakeLists.txt").is_file():
@@ -179,8 +270,20 @@ def main(argv: list[str] | None = None) -> int:
             print(line)
         return 0
 
+    if args.command == "deactivate":
+        for line in deactivate_lines(args.format):
+            print(line)
+        return 0
+
+    if args.command == "prompt-segment":
+        if args.format in {"bash", "sh"}:
+            sys.stdout.write(format_prompt_bash())
+        else:
+            sys.stdout.write(format_prompt_segment())
+        return 0
+
     if args.command == "list-targets":
-        return _print_targets(args.family)
+        return _print_targets(env, args.family)
 
     if args.command == "set-target":
         return _cmd_set_target(args, env)
@@ -204,6 +307,42 @@ def main(argv: list[str] | None = None) -> int:
         except (FileNotFoundError, ValueError) as exc:
             print(exc, file=sys.stderr)
             return 1
+
+    if args.command == "shell":
+        if args.shell_command == "init":
+            return run_shell_init(
+                env.root,
+                fmt=args.format,
+                install=args.install,
+            )
+        parser.error(f"Unknown shell command: {args.shell_command}")
+        return 2
+
+    if args.command == "registry":
+        paths = _registry_paths(env)
+        if args.registry_command == "init":
+            init_registry(paths, force=True)
+            print(f"Registry database: {paths.database}")
+            print("Seeded default chips and imported packages/manuals TOML if present.")
+            return 0
+        if args.registry_command == "export":
+            export_to_toml(paths)
+            print(f"Exported SQLite registry to {paths.registry_dir}")
+            return 0
+        if args.registry_command == "sync-status":
+            counts = sync_resource_status(paths)
+            print(f"Updated package rows: {counts['packages']}")
+            print(f"Updated manual rows: {counts['manuals']}")
+            return 0
+        parser.error(f"Unknown registry command: {args.registry_command}")
+        return 2
+
+    if args.command == "web":
+        if args.web_command == "serve":
+            run_web_server(_registry_paths(env), host=args.host, port=args.port)
+            return 0
+        parser.error(f"Unknown web command: {args.web_command}")
+        return 2
 
     parser.error(f"Unknown command: {args.command}")
     return 2

@@ -1,17 +1,4 @@
-set(CMAKE_SYSTEM_NAME Generic)
-set(CMAKE_SYSTEM_PROCESSOR arm)
+# Default fallback toolchain (Cortex-M4 profile).
+# mcuenv.py build selects toolchain-cortex-m{3,4,7,33}.cmake from chip registry cpu.
 
-set(CMAKE_C_COMPILER arm-none-eabi-gcc)
-set(CMAKE_CXX_COMPILER arm-none-eabi-g++)
-set(CMAKE_ASM_COMPILER arm-none-eabi-gcc)
-set(CMAKE_OBJCOPY arm-none-eabi-objcopy)
-set(CMAKE_SIZE arm-none-eabi-size)
-set(CMAKE_OBJDUMP arm-none-eabi-objdump)
-set(CMAKE_GDB arm-none-eabi-gdb)
-
-set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
-
-set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+include(${CMAKE_CURRENT_LIST_DIR}/toolchain-cortex-m4.cmake)

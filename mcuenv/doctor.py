@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from mcuenv.env import EnvManager
+from mcuenv.registry_db import list_chips, resolve_registry_paths
 from mcuenv.util import run_command
 
 
@@ -17,25 +19,58 @@ class CheckResult:
     detail: str
 
 
-def _run_version(env: EnvManager, tool: str, args: list[str]) -> CheckResult:
-    try:
-        binary = env.tool_binary(tool)
-    except FileNotFoundError as exc:
-        return CheckResult(name=tool, ok=False, detail=str(exc))
+def _run_version(tool: str, args: list[str]) -> CheckResult:
+    binary = shutil.which(tool)
+    if binary is None:
+        return CheckResult(
+            name=tool,
+            ok=False,
+            detail=f"{tool} not found on PATH (run mcuenv-on first)",
+        )
 
-    completed = run_command(
-        [str(binary), *args],
-        env=env.as_dict(),
-    )
+    completed = run_command([binary, *args])
     if completed != 0:
         return CheckResult(name=tool, ok=False, detail=f"exit code {completed}")
 
-    return CheckResult(name=tool, ok=True, detail=str(binary))
+    return CheckResult(name=tool, ok=True, detail=binary)
+
+
+def _check_registry(env: EnvManager) -> CheckResult:
+    paths = resolve_registry_paths(env.root, env.config.registry_database)
+    if not paths.database.is_file():
+        return CheckResult(
+            name="registry.db",
+            ok=False,
+            detail=f"Missing {paths.database}. Run: mcuenv.py registry init",
+        )
+
+    try:
+        chips = list_chips(paths)
+    except Exception as exc:
+        return CheckResult(name="registry.db", ok=False, detail=str(exc))
+
+    if not chips:
+        return CheckResult(
+            name="registry.db",
+            ok=False,
+            detail=f"No chips in {paths.database}. Run: mcuenv.py registry init",
+        )
+
+    return CheckResult(
+        name="registry.db",
+        ok=True,
+        detail=f"{paths.database} ({len(chips)} chip(s))",
+    )
 
 
 def run_doctor(env: EnvManager | None = None) -> list[CheckResult]:
     manager = env or EnvManager()
     results: list[CheckResult] = []
+
+    activation_error = EnvManager.require_active_shell()
+    if activation_error:
+        results.append(CheckResult(name="mcuenv", ok=False, detail=activation_error))
+        return results
 
     if sys.version_info < (3, 11):
         results.append(
@@ -54,6 +89,8 @@ def run_doctor(env: EnvManager | None = None) -> list[CheckResult]:
             )
         )
 
+    results.append(_check_registry(manager))
+
     describe = manager.describe()
     for key in (
         "toolchain_dir",
@@ -61,9 +98,12 @@ def run_doctor(env: EnvManager | None = None) -> list[CheckResult]:
         "ninja_dir",
         "openocd_dir",
         "openocd_scripts",
+        "pyocd_dir",
         "cmake_toolchain_file",
     ):
         path = describe[key]
+        if path == "(not configured)":
+            continue
         exists = Path(path).exists()
         results.append(
             CheckResult(
@@ -73,14 +113,15 @@ def run_doctor(env: EnvManager | None = None) -> list[CheckResult]:
             )
         )
 
-    results.extend(
-        [
-            _run_version(manager, "arm-none-eabi-gcc", ["--version"]),
-            _run_version(manager, "cmake", ["--version"]),
-            _run_version(manager, "ninja", ["--version"]),
-            _run_version(manager, "openocd", ["--version"]),
-        ]
-    )
+    tool_checks = [
+        _run_version("arm-none-eabi-gcc", ["--version"]),
+        _run_version("cmake", ["--version"]),
+        _run_version("ninja", ["--version"]),
+        _run_version("openocd", ["--version"]),
+    ]
+    if manager.tools.pyocd is not None:
+        tool_checks.append(_run_version("pyocd", ["--version"]))
+    results.extend(tool_checks)
     return results
 
 
