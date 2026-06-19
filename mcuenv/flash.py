@@ -4,26 +4,16 @@ from __future__ import annotations
 
 import shutil
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
-from mcuenv.config import ProjectConfig, load_project_config
+from mcuenv.config import ProjectConfig, default_flash_image, load_project_config
 from mcuenv.env import EnvManager
+from mcuenv.flash_config import FlashSettings, resolve_flash_settings
+from mcuenv.jlink import resolve_jlink_exe
+from mcuenv.jlink_dll import JLinkDllError, run_jlink_flash
 from mcuenv.registry_db import resolve_registry_paths
 from mcuenv.targets import TargetPreset, get_target
-from mcuenv.util import run_command
-
-
-@dataclass(frozen=True)
-class FlashSettings:
-    probe: str
-    backend: str
-    after_program: str
-    openocd_interface: str
-    openocd_target: str
-    jlink_device: str
-    pyocd_target: str
-    speed: int
+from mcuenv.util import CommandTimer, run_command
 
 
 def _registry_paths(env: EnvManager):
@@ -36,64 +26,34 @@ def _chip_preset(project: ProjectConfig, env: EnvManager) -> TargetPreset | None
     return get_target(project.target, paths=_registry_paths(env))
 
 
-def _resolve_flash_settings(project: ProjectConfig, env: EnvManager) -> FlashSettings:
+def resolve_project_flash_settings(project: ProjectConfig, env: EnvManager) -> FlashSettings:
     preset = _chip_preset(project, env)
-
-    probe = project.flash_probe or (preset.probe if preset else "") or env.config.default_flash_probe
-    backend = (
-        project.flash_backend
-        or (preset.backend if preset else "")
-        or env.config.default_flash_backend
-    )
-
-    openocd_interface = (
-        project.openocd_interface
-        or project.flash_interface
-        or (preset.openocd_interface if preset else "")
-        or env.config.default_flash_interface
-    )
-    openocd_target = project.openocd_target or (preset.openocd_target if preset else "")
-    jlink_device = project.jlink_device or (preset.jlink_device if preset else "")
-    pyocd_target = project.pyocd_target or (preset.pyocd_target if preset else "")
-
-    if backend == "openocd" and not openocd_target:
-        raise ValueError(
-            "OpenOCD target is not configured. Run 'mcuenv.py set-target <name>' "
-            "or set [flash].openocd_target in mcuenv.project.toml."
-        )
-    if backend == "pyocd" and not pyocd_target:
-        raise ValueError(
-            "pyOCD target is not configured. Set [flash].pyocd_target in mcuenv.project.toml."
-        )
-    if backend == "jlink" and not jlink_device:
-        raise ValueError(
-            "J-Link device is not configured. Set [flash].jlink_device in mcuenv.project.toml."
-        )
-
-    return FlashSettings(
-        probe=probe,
-        backend=backend,
-        after_program=project.flash_after_program or "reset_and_run",
-        openocd_interface=openocd_interface,
-        openocd_target=openocd_target,
-        jlink_device=jlink_device,
-        pyocd_target=pyocd_target,
-        speed=project.flash_speed,
-    )
+    return resolve_flash_settings(project, env.config, preset)
 
 
-def _resolve_elf(project: ProjectConfig) -> Path:
-    if project.elf_name:
-        elf = project.root / project.elf_name
-    else:
-        elf = project.root / project.build_dir / f"{project.name}.elf"
+def _resolve_firmware(project: ProjectConfig, settings: FlashSettings) -> Path:
+    pattern = settings.image.strip() or default_flash_image(project)
+    base = project.root
 
-    if not elf.is_file():
+    if any(character in pattern for character in "*?[]"):
+        matches = sorted(path for path in base.glob(pattern) if path.is_file())
+        if not matches:
+            raise FileNotFoundError(f"No firmware file matched pattern: {base / pattern}")
+        if len(matches) > 1:
+            joined = ", ".join(str(path.relative_to(project.root)) for path in matches)
+            raise FileNotFoundError(
+                f"Multiple firmware files matched {pattern}: {joined}. "
+                "Use a more specific [flash].image path."
+            )
+        return matches[0]
+
+    firmware = base / pattern
+    if not firmware.is_file():
         raise FileNotFoundError(
-            f"Firmware image not found: {elf}. Build the project first or set "
-            "[build].elf_name in mcuenv.project.toml."
+            f"Firmware image not found: {firmware}. Build the project first or set "
+            "[flash].image in mcuenv.project.toml."
         )
-    return elf
+    return firmware
 
 
 def _openocd_program_command(
@@ -112,12 +72,13 @@ def _flash_openocd(
     firmware: Path,
     manager: EnvManager,
     *,
-    interface: str | None,
+    adapter: str | None,
     target: str | None,
     verbose: bool,
 ) -> int:
-    resolved_interface = interface or settings.openocd_interface
-    resolved_target = target or settings.openocd_target
+    openocd_cfg = settings.openocd
+    resolved_adapter = adapter or openocd_cfg.adapter
+    resolved_target = target or openocd_cfg.target
     openocd = manager.tool_binary("openocd")
     scripts = manager.tools.openocd_scripts
 
@@ -126,16 +87,23 @@ def _flash_openocd(
         "-s",
         str(scripts),
         "-f",
-        f"interface/{resolved_interface}.cfg",
+        f"interface/{resolved_adapter}.cfg",
         "-f",
         f"target/{resolved_target}.cfg",
-        "-c",
-        _openocd_program_command(settings.after_program, firmware),
     ]
-    return run_command(command, verbose=verbose)
+    if openocd_cfg.transport:
+        command.extend(["-c", f"transport select {openocd_cfg.transport}"])
+    if openocd_cfg.adapter_speed_khz > 0:
+        command.extend(["-c", f"adapter speed {openocd_cfg.adapter_speed_khz}"])
+    if openocd_cfg.extra_commands:
+        command.extend(["-c", openocd_cfg.extra_commands])
+    command.extend(
+        ["-c", _openocd_program_command(settings.after_program, firmware)]
+    )
+    return run_command(command, verbose=verbose, progress=True)
 
 
-def _find_pyocd(manager: EnvManager) -> str:
+def find_pyocd(manager: EnvManager) -> str:
     if manager.tools.pyocd is not None:
         try:
             return str(manager.tool_binary("pyocd"))
@@ -151,6 +119,10 @@ def _find_pyocd(manager: EnvManager) -> str:
     )
 
 
+def find_jlink(manager: EnvManager) -> Path:
+    return resolve_jlink_exe(manager.config.paths.get("jlink"))
+
+
 def _flash_pyocd(
     settings: FlashSettings,
     firmware: Path,
@@ -159,50 +131,52 @@ def _flash_pyocd(
     target: str | None,
     verbose: bool,
 ) -> int:
-    pyocd = _find_pyocd(manager)
-    resolved_target = target or settings.pyocd_target
-    command = [pyocd, "flash", "-t", resolved_target, str(firmware)]
+    pyocd = find_pyocd(manager)
+    pyocd_cfg = settings.pyocd
+    resolved_target = target or pyocd_cfg.target
+    command = [
+        pyocd,
+        "flash",
+        "-t",
+        resolved_target,
+        "-f",
+        str(pyocd_cfg.frequency_hz),
+        str(firmware),
+    ]
+    if pyocd_cfg.probe_uid:
+        command.extend(["-u", pyocd_cfg.probe_uid])
+    if pyocd_cfg.pack:
+        command.extend(["--pack", pyocd_cfg.pack])
     if settings.after_program == "none":
         command.append("--no-reset")
-    return run_command(command, verbose=verbose)
+    return run_command(command, verbose=verbose, progress=True)
 
 
 def _flash_jlink(
     settings: FlashSettings,
     firmware: Path,
+    manager: EnvManager,
     *,
     verbose: bool,
 ) -> int:
-    jlink = shutil.which("JLinkExe")
-    if not jlink:
-        raise FileNotFoundError(
-            "JLinkExe not found in PATH. Install SEGGER J-Link software first."
+    if verbose:
+        jlink = settings.jlink
+        print(
+            f"J-Link flash: device={jlink.device}, interface={jlink.interface}, "
+            f"speed={jlink.speed_khz} kHz, image={firmware}",
+            flush=True,
         )
-
-    reset_line = "r"
-    if settings.after_program == "none":
-        reset_line = ""
-    elif settings.after_program == "reset_halt":
-        reset_line = "r\nhalt"
-
-    script_lines = [
-        f"device {settings.jlink_device}",
-        "si SWD",
-        f"speed {settings.speed or 4000}",
-        "connect",
-        f"loadfile {firmware}",
-        "verify",
-    ]
-    if reset_line:
-        script_lines.append(reset_line)
-    script_lines.append("exit")
-
-    script_path = firmware.parent / ".mcuenv_jlink_flash.jlink"
-    script_path.write_text("\n".join(script_lines) + "\n", encoding="ascii")
     try:
-        return run_command([jlink, "-CommandFile", str(script_path)], verbose=verbose)
-    finally:
-        script_path.unlink(missing_ok=True)
+        run_jlink_flash(
+            settings.jlink,
+            firmware,
+            configured_dir=manager.config.paths.get("jlink"),
+            after_program=settings.after_program,
+        )
+    except (JLinkDllError, FileNotFoundError, OSError) as exc:
+        print(f"J-Link flash failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def flash_project(
@@ -220,35 +194,36 @@ def flash_project(
         print(activation_error, file=sys.stderr)
         return 1
 
-    project = load_project_config(project_dir)
-    settings = _resolve_flash_settings(project, manager)
-    firmware = elf or _resolve_elf(project)
+    with CommandTimer("Flash"):
+        project = load_project_config(project_dir)
+        settings = resolve_project_flash_settings(project, manager)
+        firmware = elf or _resolve_firmware(project, settings)
 
-    if settings.backend == "openocd":
-        return _flash_openocd(
-            settings,
-            firmware,
-            manager,
-            interface=interface,
-            target=target,
-            verbose=verbose,
-        )
-    if settings.backend == "pyocd":
-        return _flash_pyocd(
-            settings,
-            firmware,
-            manager,
-            target=target,
-            verbose=verbose,
-        )
-    if settings.backend == "jlink":
-        return _flash_jlink(settings, firmware, verbose=verbose)
+        if settings.tool == "openocd":
+            return _flash_openocd(
+                settings,
+                firmware,
+                manager,
+                adapter=interface,
+                target=target,
+                verbose=verbose,
+            )
+        if settings.tool == "pyocd":
+            return _flash_pyocd(
+                settings,
+                firmware,
+                manager,
+                target=target,
+                verbose=verbose,
+            )
+        if settings.tool == "jlink":
+            return _flash_jlink(settings, firmware, manager, verbose=verbose)
 
-    raise ValueError(f"Unsupported flash backend: {settings.backend}")
+        raise ValueError(f"Unsupported flash tool: {settings.tool}")
 
 
 def describe_flash_settings(project: ProjectConfig, env: EnvManager) -> dict[str, str]:
-    settings = _resolve_flash_settings(project, env)
+    settings = resolve_project_flash_settings(project, env)
     preset = _chip_preset(project, env)
 
     return {
@@ -256,10 +231,13 @@ def describe_flash_settings(project: ProjectConfig, env: EnvManager) -> dict[str
         "target": project.target or "(unset)",
         "mcu": preset.mcu if preset else "(unset)",
         "probe": settings.probe,
-        "backend": settings.backend,
+        "tool": settings.tool,
         "after_program": settings.after_program,
-        "openocd_interface": settings.openocd_interface,
-        "openocd_target": settings.openocd_target,
-        "jlink_device": settings.jlink_device,
-        "pyocd_target": settings.pyocd_target,
+        "image": settings.image or default_flash_image(project),
+        "jlink_device": settings.jlink.device,
+        "jlink_interface": settings.jlink.interface,
+        "jlink_speed_khz": str(settings.jlink.speed_khz),
+        "openocd_adapter": settings.openocd.adapter,
+        "openocd_target": settings.openocd.target,
+        "pyocd_target": settings.pyocd.target,
     }

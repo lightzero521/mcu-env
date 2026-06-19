@@ -5,27 +5,30 @@
 root_var = "MCUENV_ROOT"
 
 [paths]
+# 工具链路径
 toolchain = "tools/arm-gnu-toolchain/bin"
 cmake = "tools/cmake/bin"
 ninja = "tools/ninja/bin"
 openocd = "tools/openocd/bin"
 openocd_scripts = "tools/openocd/openocd/scripts"
 pyocd = "tools/pyocd"
+jlink = "D:/Program Files/SEGGER/JLink"
 registry = "registry"
 packages = "packages"
 manuals = "manuals"
 
 [toolchain]
-prefix = "arm-none-eabi-"  # 保留字段；编译器 triplet 见 cmake/toolchain-base-*.cmake
-cmake_toolchain_file = "cmake/toolchain-arm-none-eabi.cmake"  # fallback when cpu is unknown
-
-[build]
-generator = "Ninja"
+# 保留字段；编译器 triplet 见 cmake/toolchain-base-*.cmake
+prefix = "arm-none-eabi-"  
+# 当 CPU 未知时，fallback 到 arm-none-eabi-gcc
+cmake_toolchain_file = "cmake/toolchain-arm-none-eabi.cmake"  
 
 [flash]
-default_interface = "stlink"
-default_probe = "stlink"
-default_backend = "openocd"
+# 新建工程或未 set-target 时的默认烧录工具：openocd | pyocd | jlink
+default_tool = "jlink"
+# 默认物理调试探针：stlink | jlink | cmsis-dap
+default_probe = "jlink"
 
 [registry]
+# 芯片注册数据库文件路径
 database = "data/registry.db"

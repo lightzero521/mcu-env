@@ -8,8 +8,9 @@ from pathlib import Path
 
 from mcuenv import __version__
 from mcuenv.build import build_project, clean_project
-from mcuenv.config import apply_target_defaults, find_project_root, load_project_config, write_project_config
+from mcuenv.config import apply_target_defaults, default_flash_image, find_project_root, load_project_config, write_project_config
 from mcuenv.doctor import print_doctor_report, run_doctor
+from mcuenv.erase import erase_project
 from mcuenv.env import EnvManager
 from mcuenv.flash import describe_flash_settings, flash_project
 from mcuenv.prompt import format_prompt_bash, format_prompt_segment
@@ -49,7 +50,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "-v",
         "--verbose",
         action="store_true",
-        help="Print commands before execution",
+        help="Print commands and enable verbose tool output (e.g. cmake --build --verbose)",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -144,7 +145,7 @@ def _build_parser() -> argparse.ArgumentParser:
     flash_parser.add_argument(
         "--interface",
         default=None,
-        help="OpenOCD interface config name, without .cfg",
+        help="OpenOCD adapter config name (without .cfg), overrides [flash.openocd].adapter",
     )
     flash_parser.add_argument(
         "--target",
@@ -157,6 +158,17 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Firmware ELF path override",
+    )
+
+    erase_parser = subparsers.add_parser(
+        "erase",
+        help="Erase chip flash (pyOCD or J-Link backend)",
+    )
+    erase_parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=None,
+        help="Project directory (default: auto-detect)",
     )
 
     shell_parser = subparsers.add_parser(
@@ -230,7 +242,7 @@ def _print_targets(env: EnvManager, family: str | None) -> int:
         note = f" ({preset.note})" if preset.note else ""
         print(
             f"{preset.name:18} {preset.family:5} {preset.mcu:16} "
-            f"{preset.cpu:12} {preset.backend:7} probe={preset.probe}{note}"
+            f"{preset.cpu:12} {preset.tool:7} probe={preset.probe}{note}"
         )
     return 0
 
@@ -246,6 +258,8 @@ def _cmd_set_target(args: argparse.Namespace, env: EnvManager) -> int:
         project.name = args.name
     elif project.name == "firmware" and (project_root / "CMakeLists.txt").is_file():
         project.name = project_root.name
+
+    project.flash_image = default_flash_image(project)
 
     write_project_config(project)
     print(f"Target set to {preset.name} ({preset.mcu})")
@@ -292,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
         return build_project(args.project_dir, verbose=args.verbose, env=env)
 
     if args.command == "clean":
-        return clean_project(args.project_dir, env=env)
+        return clean_project(args.project_dir, verbose=args.verbose, env=env)
 
     if args.command == "flash":
         try:
@@ -301,6 +315,17 @@ def main(argv: list[str] | None = None) -> int:
                 interface=args.interface,
                 target=args.openocd_target,
                 elf=args.elf,
+                verbose=args.verbose,
+                env=env,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            print(exc, file=sys.stderr)
+            return 1
+
+    if args.command == "erase":
+        try:
+            return erase_project(
+                args.project_dir,
                 verbose=args.verbose,
                 env=env,
             )

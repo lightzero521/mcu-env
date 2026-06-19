@@ -88,6 +88,17 @@ class EnvManager:
 
         raise ValueError(f"Unsupported export format: {fmt}")
 
+    def _describe_jlink_dir(self) -> str:
+        configured = self.config.paths.get("jlink")
+        if configured is not None:
+            return str(configured)
+        from mcuenv.jlink import jlink_install_path_from_registry
+
+        registry = jlink_install_path_from_registry()
+        if registry is not None:
+            return f"{registry} (registry)"
+        return "(not configured; use PATH or set [paths].jlink)"
+
     @staticmethod
     def require_active_shell(*, require_cross_compiler: bool = False) -> str | None:
         if os.environ.get("MCUENV_ACTIVE") != "1":
@@ -131,6 +142,7 @@ class EnvManager:
             "openocd_dir": str(self.tools.openocd),
             "openocd_scripts": str(self.tools.openocd_scripts),
             "pyocd_dir": str(self.tools.pyocd) if self.tools.pyocd else "(not configured)",
+            "jlink_dir": self._describe_jlink_dir(),
             "cmake_toolchain_file": str(self.config.cmake_toolchain_file),
             "bin_dir": str(self.bin_dir),
         }

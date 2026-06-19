@@ -7,9 +7,30 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from mcuenv.flash_config import (
+    FlashJlinkConfig,
+    FlashOpenocdConfig,
+    FlashPyocdConfig,
+    default_jlink_config,
+    default_openocd_config,
+    default_pyocd_config,
+    jlink_config_from_mapping,
+    jlink_config_from_preset,
+    migrate_legacy_flash_section,
+    openocd_config_from_mapping,
+    openocd_config_from_preset,
+    pyocd_config_from_mapping,
+    pyocd_config_from_preset,
+)
+
 
 PROJECT_CONFIG_NAME = "mcuenv.project.toml"
 GLOBAL_CONFIG_NAME = "mcuenv.toml"
+
+
+def default_flash_image(project: ProjectConfig) -> str:
+    """Default firmware path relative to project root when [flash].image is empty."""
+    return f"{project.build_dir}/{project.name}.elf"
 
 
 @dataclass(frozen=True)
@@ -18,10 +39,8 @@ class GlobalConfig:
     paths: dict[str, Path]
     toolchain_prefix: str
     cmake_toolchain_file: Path
-    build_generator: str
-    default_flash_interface: str
+    default_flash_tool: str
     default_flash_probe: str
-    default_flash_backend: str
     registry_database: Path | None = None
 
 
@@ -31,21 +50,17 @@ class ProjectConfig:
     name: str = "firmware"
     target: str = ""
     build_dir: str = "build"
-    generator: str = ""
-    elf_name: str = ""
     linker_script: str = ""
     toolchain_file: str = ""
     pre_build: list[str] = field(default_factory=list)
     post_build: list[str] = field(default_factory=list)
+    flash_tool: str = ""
     flash_probe: str = ""
-    flash_backend: str = ""
     flash_after_program: str = "reset_and_run"
-    flash_interface: str = ""
-    openocd_target: str = ""
-    openocd_interface: str = ""
-    jlink_device: str = ""
-    pyocd_target: str = ""
-    flash_speed: int = 0
+    flash_image: str = ""
+    flash_jlink: FlashJlinkConfig = field(default_factory=default_jlink_config)
+    flash_openocd: FlashOpenocdConfig = field(default_factory=default_openocd_config)
+    flash_pyocd: FlashPyocdConfig = field(default_factory=default_pyocd_config)
     debug_probe: str = ""
     debug_backend: str = ""
     debug_on_connect: str = "reset_halt"
@@ -96,7 +111,6 @@ def load_global_config(root: Path | None = None) -> GlobalConfig:
 
     paths_section = data.get("paths", {})
     toolchain_section = data.get("toolchain", {})
-    build_section = data.get("build", {})
     flash_section = data.get("flash", {})
     registry_section = data.get("registry", {})
 
@@ -118,15 +132,15 @@ def load_global_config(root: Path | None = None) -> GlobalConfig:
         if not registry_database.is_absolute():
             registry_database = env_root / registry_database
 
+    default_tool = flash_section.get("default_tool") or flash_section.get("default_backend", "openocd")
+
     return GlobalConfig(
         root=env_root,
         paths=paths,
         toolchain_prefix=toolchain_section.get("prefix", "arm-none-eabi-"),
         cmake_toolchain_file=toolchain_file,
-        build_generator=build_section.get("generator", "Ninja"),
-        default_flash_interface=flash_section.get("default_interface", "stlink"),
+        default_flash_tool=default_tool,
         default_flash_probe=flash_section.get("default_probe", "stlink"),
-        default_flash_backend=flash_section.get("default_backend", "openocd"),
         registry_database=registry_database,
     )
 
@@ -157,29 +171,30 @@ def load_project_config(project_root: Path | None = None) -> ProjectConfig:
 
     project = data.get("project", {})
     build = data.get("build", {})
-    flash = data.get("flash", {})
+    flash = migrate_legacy_flash_section(data.get("flash", {}))
     debug = data.get("debug", {})
+
+    flash_image = str(flash.get("image", ""))
+    legacy_elf = build.get("elf_name", "")
+    if not flash_image and legacy_elf:
+        flash_image = str(legacy_elf)
 
     return ProjectConfig(
         root=root,
         name=project.get("name", "firmware"),
         target=project.get("target", ""),
         build_dir=build.get("build_dir", "build"),
-        generator=build.get("generator", ""),
-        elf_name=build.get("elf_name", ""),
-        linker_script=build.get("linker_script", ""),
-        toolchain_file=build.get("toolchain_file", ""),
+        linker_script=str(build.get("linker_script", "")),
+        toolchain_file=str(build.get("toolchain_file", "")),
         pre_build=_toml_string_list(build.get("pre_build")),
         post_build=_toml_string_list(build.get("post_build")),
-        flash_probe=flash.get("probe", ""),
-        flash_backend=flash.get("backend", ""),
-        flash_after_program=flash.get("after_program", "reset_and_run"),
-        flash_interface=flash.get("interface", ""),
-        openocd_target=flash.get("openocd_target", ""),
-        openocd_interface=flash.get("openocd_interface", ""),
-        jlink_device=flash.get("jlink_device", ""),
-        pyocd_target=flash.get("pyocd_target", ""),
-        flash_speed=int(flash.get("speed", 0) or 0),
+        flash_tool=str(flash.get("tool", "")),
+        flash_probe=str(flash.get("probe", "")),
+        flash_after_program=str(flash.get("after_program", "reset_and_run")),
+        flash_image=flash_image,
+        flash_jlink=jlink_config_from_mapping(flash.get("jlink")),
+        flash_openocd=openocd_config_from_mapping(flash.get("openocd")),
+        flash_pyocd=pyocd_config_from_mapping(flash.get("pyocd")),
         debug_probe=debug.get("probe", ""),
         debug_backend=debug.get("backend", ""),
         debug_on_connect=debug.get("on_connect", "reset_halt"),
@@ -194,12 +209,16 @@ def load_project_config(project_root: Path | None = None) -> ProjectConfig:
 
 def apply_target_defaults(project: ProjectConfig, preset) -> None:
     project.target = preset.name
+    project.toolchain_file = ""
+    project.linker_script = ""
+    project.pre_build = []
+    project.post_build = []
+    project.flash_tool = preset.tool
     project.flash_probe = preset.probe
-    project.flash_backend = preset.backend
-    project.openocd_target = preset.openocd_target
-    project.openocd_interface = preset.openocd_interface or project.openocd_interface
-    project.jlink_device = preset.jlink_device
-    project.pyocd_target = preset.pyocd_target
+    project.flash_after_program = "reset_and_run"
+    project.flash_jlink = jlink_config_from_preset(preset)
+    project.flash_openocd = openocd_config_from_preset(preset)
+    project.flash_pyocd = pyocd_config_from_preset(preset)
     project.debug_probe = preset.probe
     project.debug_backend = preset.backend
     project.debug_jlink_device = preset.jlink_device
@@ -208,58 +227,88 @@ def apply_target_defaults(project: ProjectConfig, preset) -> None:
     project.debug_pyocd_target = preset.pyocd_target
 
 
-def _append_toml_list(lines: list[str], key: str, values: list[str]) -> None:
+def _format_toml_list(values: list[str]) -> str:
     if not values:
-        return
+        return "[]"
     if len(values) == 1:
-        lines.append(f'{key} = "{values[0]}"')
-        return
+        return f'["{values[0]}"]'
     items = ", ".join(f'"{value}"' for value in values)
-    lines.append(f"{key} = [{items}]")
+    return f"[{items}]"
 
 
 def write_project_config(project: ProjectConfig) -> None:
+    jlink = project.flash_jlink
+    openocd = project.flash_openocd
+    pyocd = project.flash_pyocd
+
     lines = [
         "[project]",
         f'name = "{project.name}"',
         f'target = "{project.target}"',
         "",
         "[build]",
+        "# CMake 构建输出目录",
         f'build_dir = "{project.build_dir}"',
+        "# 工程 toolchain（相对工程根）；留空则按 chip cpu 或 mcuenv.toml fallback",
+        f'toolchain_file = "{project.toolchain_file}"',
+        "# 链接脚本（相对工程根）；留空则不注入，由 CMakeLists 指定",
+        f'linker_script = "{project.linker_script}"',
+        "# 编译前脚本（相对工程根）；空列表表示不执行",
+        f"pre_build = {_format_toml_list(project.pre_build)}",
+        "# 编译后脚本；空列表表示不执行",
+        f"post_build = {_format_toml_list(project.post_build)}",
+        "",
+        "[flash]",
+        "# 烧录软件栈：openocd | pyocd | jlink",
+        f'tool = "{project.flash_tool}"',
+        "# 物理调试探针：stlink | jlink | cmsis-dap",
+        f'probe = "{project.flash_probe}"',
+        "# 烧录完成后：reset_and_run | reset_halt | none",
+        f'after_program = "{project.flash_after_program}"',
+        "# 烧录固件（相对工程根，支持 glob）；留空则使用 build_dir/<项目名>.elf",
+        f'image = "{project.flash_image}"',
+        "",
+        "[flash.jlink]",
+        "# J-Link 设备名（SEGGER 设备数据库）",
+        f'device = "{jlink.device}"',
+        "# 调试接口：swd | jtag",
+        f'interface = "{jlink.interface}"',
+        "# 连接速度（kHz）",
+        f"speed_khz = {jlink.speed_khz}",
+        "# J-Link 序列号；空字符串表示自动选择",
+        f'serial = "{jlink.serial}"',
+        "# 复位策略（可选），如 connect_under_reset",
+        f'reset_strategy = "{jlink.reset_strategy}"',
+        "# J-Link 脚本文件（可选）",
+        f'script = "{jlink.script}"',
+        "",
+        "[flash.openocd]",
+        "# 适配器配置名（interface/<adapter>.cfg）",
+        f'adapter = "{openocd.adapter}"',
+        "# 目标配置名（target/<target>.cfg）",
+        f'target = "{openocd.target}"',
+        "# 传输协议：swd | jtag",
+        f'transport = "{openocd.transport}"',
+        "# 适配器速度（kHz）；0 表示默认",
+        f"adapter_speed_khz = {openocd.adapter_speed_khz}",
+        "# 额外 OpenOCD -c 命令（可选）",
+        f'extra_commands = "{openocd.extra_commands}"',
+        "",
+        "[flash.pyocd]",
+        "# pyOCD 目标名",
+        f'target = "{pyocd.target}"',
+        "# 探针 UID；空字符串表示自动选择",
+        f'probe_uid = "{pyocd.probe_uid}"',
+        "# SWD 频率（Hz）",
+        f"frequency_hz = {pyocd.frequency_hz}",
+        "# 连接方式（可选）",
+        f'connect_mode = "{pyocd.connect_mode}"',
+        "# 自定义 CMSIS-Pack 路径（可选）",
+        f'pack = "{pyocd.pack}"',
+        "",
+        "[debug]",
     ]
 
-    if project.generator:
-        lines.append(f'generator = "{project.generator}"')
-    if project.elf_name:
-        lines.append(f'elf_name = "{project.elf_name}"')
-    if project.linker_script:
-        lines.append(f'linker_script = "{project.linker_script}"')
-    if project.toolchain_file:
-        lines.append(f'toolchain_file = "{project.toolchain_file}"')
-    _append_toml_list(lines, "pre_build", project.pre_build)
-    _append_toml_list(lines, "post_build", project.post_build)
-
-    lines.extend(["", "[flash]"])
-    if project.flash_probe:
-        lines.append(f'probe = "{project.flash_probe}"')
-    if project.flash_backend:
-        lines.append(f'backend = "{project.flash_backend}"')
-    if project.flash_after_program:
-        lines.append(f'after_program = "{project.flash_after_program}"')
-    if project.flash_interface:
-        lines.append(f'interface = "{project.flash_interface}"')
-    if project.openocd_target:
-        lines.append(f'openocd_target = "{project.openocd_target}"')
-    if project.openocd_interface:
-        lines.append(f'openocd_interface = "{project.openocd_interface}"')
-    if project.jlink_device:
-        lines.append(f'jlink_device = "{project.jlink_device}"')
-    if project.pyocd_target:
-        lines.append(f'pyocd_target = "{project.pyocd_target}"')
-    if project.flash_speed:
-        lines.append(f"speed = {project.flash_speed}")
-
-    lines.extend(["", "[debug]"])
     if project.debug_probe:
         lines.append(f'probe = "{project.debug_probe}"')
     if project.debug_backend:

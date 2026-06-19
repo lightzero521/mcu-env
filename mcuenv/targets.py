@@ -24,6 +24,10 @@ class TargetPreset:
     pyocd_target: str
     note: str = ""
 
+    @property
+    def tool(self) -> str:
+        return self.backend
+
 
 def _registry_paths(root: Path | None = None) -> RegistryPaths:
     env_root = detect_root(root)

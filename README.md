@@ -21,6 +21,7 @@
 | `build` | CMake + Ninja 配置并编译 |
 | `clean` | 清理工程 build 目录 |
 | `flash` | 按工程配置烧录 ELF（OpenOCD / pyOCD / J-Link） |
+| `erase` | 整片擦除 Flash（pyOCD / J-Link） |
 | `shell init` | 生成或安装 `mcuenv-on` 到 shell profile |
 | `registry init/export/sync-status` | 管理 SQLite registry（芯片 + packages/manuals） |
 | `web serve` | 启动 registry Web 管理后台 |
@@ -154,7 +155,17 @@ Run 'deactivate' when you want to leave this environment.
 (mcuenv) PS D:\your\project>
 ```
 
-`build` / `clean` / `flash` / `doctor` **必须先 `mcuenv-on`**，子进程继承当前终端 PATH，不会自行注入环境。
+`build` / `clean` / `flash` / `erase` / `doctor` **必须先 `mcuenv-on`**，子进程继承当前终端 PATH，不会自行注入环境。
+
+`build`、`clean`、`flash`、`erase` 完成后会打印耗时。`flash` / `erase`（J-Link）在 DLL 回调可用时显示进度条；`build` 默认输出 Ninja 的 `[n/m]` 步骤行（含 POST_BUILD 的 `size` 等）。
+
+**详细编译日志**（Keil 风格，仅显示 `compiling xxx.c`，不刷屏 gcc 命令行）：
+
+```bash
+mcuenv.py --verbose build
+```
+
+> **PowerShell**：请写 `--verbose`，不要写 `-v`。激活后的 `mcuenv.py` 函数会把 `-v` 当成 PowerShell 的 `-Verbose`，传不到 Python。也可用 `mcuenv.py --% -v build`。
 
 ### 2. 初始化芯片 registry
 
@@ -180,6 +191,7 @@ mcuenv.py env-info
 mcuenv.py set-target stm32f103c8t6
 mcuenv.py build
 mcuenv.py flash
+mcuenv.py erase    # 需 [flash].tool 为 pyocd 或 jlink
 ```
 
 会在工程根目录生成 `mcuenv.project.toml`，例如：
@@ -190,20 +202,48 @@ name = "my-firmware"
 target = "stm32f103c8t6"
 
 [build]
+# CMake 构建输出目录
 build_dir = "build"
-toolchain_file = "cmake/toolchain-cortex-m4.cmake"  # 可选；工程内自定义 toolchain，优先于 mcu-env
-linker_script = "linker/app.ld"
-pre_build = ["scripts/gen_assets.py"]
+# 工程 toolchain（相对工程根）；留空则按 chip cpu 或 mcuenv.toml fallback
+toolchain_file = ""
+# 链接脚本（相对工程根）；留空则不注入，由 CMakeLists 指定
+linker_script = ""
+# 编译前脚本（相对工程根）；空列表表示不执行
+pre_build = []
+# 编译后脚本；空列表表示不执行
 post_build = []
 
 [flash]
+# 烧录软件栈：openocd | pyocd | jlink
+tool = "openocd"
+# 物理调试探针：stlink | jlink | cmsis-dap
 probe = "stlink"
-backend = "openocd"
+# 烧录完成后：reset_and_run | reset_halt | none
 after_program = "reset_and_run"
-openocd_interface = "stlink"
-openocd_target = "stm32f1x"
-jlink_device = "STM32F103C8"
-pyocd_target = "stm32f103c8"
+# 烧录固件（相对工程根，支持 glob）；留空则使用 build_dir/<项目名>.elf
+image = "build/my-firmware.elf"
+
+[flash.jlink]
+device = "STM32F103C8"
+interface = "swd"
+speed_khz = 4000
+serial = ""
+reset_strategy = ""
+script = ""
+
+[flash.openocd]
+adapter = "stlink"
+target = "stm32f1x"
+transport = "swd"
+adapter_speed_khz = 0
+extra_commands = ""
+
+[flash.pyocd]
+target = "stm32f103c8"
+probe_uid = ""
+frequency_hz = 4000000
+connect_mode = "halt"
+pack = ""
 
 [debug]
 probe = "stlink"
@@ -214,18 +254,24 @@ jlink_device = "STM32F103C8"
 pyocd_target = "stm32f103c8"
 ```
 
-默认烧录 `build/<项目名>.elf`。linker 脚本内容手改文件，TOML 只写路径。
+默认烧录 `[flash].image` 所指文件；`set-target` 会写入 `build/<项目名>.elf`。`image` 留空时按 `build_dir` 与 `[project].name` 推导。linker 脚本内容手改文件，TOML 只写路径。
 
 ## 内置芯片（SQLite）
 
-| id | 系列 | MCU | CPU | 默认 backend |
-|----|------|-----|-----|--------------|
+| id | 系列 | MCU | CPU | 默认 tool |
+|----|------|-----|-----|-----------|
 | `stm32f103c8t6` | STM32 | STM32F103C8T6 | cortex-m3 | openocd |
 | `stm32h750xbh6` | STM32 | STM32H750XBH6 | cortex-m7 | openocd |
 | `gd32f303vet6` | GD32 | GD32F303VET6 | cortex-m4 | pyocd |
 | `gd32f527zmt7` | GD32 | GD32F527ZMT7 | cortex-m33 | jlink |
 
-`[flash].backend` 可选 `openocd`、`pyocd`、`jlink`；`probe` 预留 `stlink` / `jlink` / `daplink`。pyOCD 默认使用 `mcuenv.toml` 中 `[paths].pyocd`（激活后进 PATH），也可系统 `pip install pyocd`。
+`[flash].tool` 可选 `openocd`、`pyocd`、`jlink`；`probe` 为 `stlink` / `jlink` / `cmsis-dap`。各 backend 参数分别在 `[flash.jlink]`、`[flash.openocd]`、`[flash.pyocd]`。pyOCD 默认使用 `mcuenv.toml` 中 `[paths].pyocd`（激活后进 PATH），也可系统 `pip install pyocd`。
+
+**J-Link**：烧录/擦除通过 SEGGER DLL（ctypes）：64 位 Python 加载 `JLink_x64.dll`，32 位加载 `JLinkARM.dll`。查找顺序：`[paths].jlink` → 注册表 `InstallPath`。进度条来自 `JLINK_SetFlashProgProgressCallback`。片上 Flash 由 SEGGER 设备库中的 **RAM FlashLoader** 执行擦写。仍保留 Commander（`JLinkExe`）路径解析（`doctor` 等），但 `flash` / `erase` 不再调用 `JLink.exe` 脚本。
+
+**擦除**：`mcuenv.py erase` 支持 `pyocd`（`pyocd erase --chip`）与 `jlink`（`JLINK_EraseChip`，整片擦除，通常为数秒级）；OpenOCD 暂未适配。
+
+**`[debug]`**：`set-target` 会写入调试相关字段，供 IDE / 后续 `mcuenv debug` 使用；**当前 CLI 尚未读取该段**，烧录请配置 `[flash]`。
 
 筛选某一系列：
 
@@ -291,7 +337,7 @@ cmake toolchain      base-arm / cortex-m* 写 triplet 与 -mcpu；编译器从 P
 
 ### 全局配置 `mcuenv.toml`
 
-定义工具路径、默认构建生成器、OpenOCD 默认接口等。路径相对于 `MCUENV_ROOT`（即本仓库根目录）。`[toolchain].prefix` 为保留字段；编译器 triplet 见 `cmake/toolchain-base-*.cmake`。
+定义工具路径、默认烧录工具等。构建固定为 **CMake + Ninja**。路径相对于 `MCUENV_ROOT`（即本仓库根目录）。`[toolchain].prefix` 为保留字段；编译器 triplet 见 `cmake/toolchain-base-*.cmake`。
 
 激活环境后，终端提示符会固定显示绿色粗体 `(mcuenv)` 前缀。
 
@@ -360,6 +406,8 @@ mcuenv.py deactivate
 ## 贡献与发布
 
 `tools/`、`packages/`、`manuals/`、`data/*.db` 默认不纳入版本控制。克隆仓库后本地安装工具并执行 `mcuenv.py registry init`。若团队需要共享二进制，可考虑 Git LFS、Release 附件或内部制品库。
+
+变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 路线图
 
