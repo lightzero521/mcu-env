@@ -87,11 +87,13 @@ tools/openocd/openocd/scripts/   # OpenOCD 脚本目录
 tools/pyocd/pyocd               # 或 Scripts/pyocd（pip --target 布局）
 ```
 
-路径可在 `mcuenv.toml` 的 `[paths]` 段修改。
+路径可在 `mcuenv.toml` 的 `[paths]` 段修改；本机差异请写入 **`mcuenv.local.toml`**（已 gitignore，不污染仓库默认值）。
+
+**ARM GNU 工具链（Linux 示例）：** 从 [ARM 官方发布页](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) 下载 `arm-gnu-toolchain-*-x86_64-arm-none-eabi.tar.xz`，解压后把 `bin/` 对齐到 `tools/arm-gnu-toolchain/bin/`（解压命令：`tar -Jxvf …tar.xz`，`-J` 表示 xz；若报 `Compressed data is corrupt` 说明下载不完整，需重新下载）。
 
 安装工具后，先激活环境再自检：
 
-```powershell
+```bash
 mcuenv-on
 mcuenv.py doctor
 ```
@@ -149,13 +151,21 @@ mcuenv-on
 激活成功后会看到：
 
 ```text
-mcuenv activated: D:\mcu-env
+mcuenv activated: /path/to/mcu-env
 Run 'mcuenv.py doctor' to verify the environment.
 Run 'deactivate' when you want to leave this environment.
-(mcuenv) PS D:\your\project>
+(mcuenv) user@host:~/your/project$    # Linux Bash（绿色前缀）
+(mcuenv) PS D:\your\project>          # Windows PowerShell
 ```
 
 `build` / `clean` / `flash` / `erase` / `doctor` **必须先 `mcuenv-on`**，子进程继承当前终端 PATH，不会自行注入环境。
+
+**Linux / Debian 说明：**
+
+- Bash 提示符前缀由 `export.sh` 注入 `PS1`；颜色转义使用 Bash 可识别的 `\e`（勿在 `PS1` 中写 `\x1b` 字面量）。
+- `export.sh` 仅在激活过程中启用严格模式（`set -euo pipefail`），结束后会恢复你原来的 shell 选项，因此 `mcuenv.py doctor` 出现 `[FAIL]` 时**不会**关闭终端。
+- `bin/mcuenv.py` 在 Linux 上需有可执行权限；仓库内已设置 `+x`，克隆后可直接进 PATH 使用。
+- 本机路径与工具布局可在 `mcuenv.local.toml` 中覆盖（见下方配置说明），无需改仓库里的 `mcuenv.toml`。
 
 `build`、`clean`、`flash`、`erase` 完成后会打印耗时。`flash` / `erase`（J-Link）在 DLL 回调可用时显示进度条；`build` 默认输出 Ninja 的 `[n/m]` 步骤行（含 POST_BUILD 的 `size` 等）。
 
@@ -405,7 +415,7 @@ mcuenv.py deactivate
 
 ## 贡献与发布
 
-`tools/`、`packages/`、`manuals/`、`data/*.db` 默认不纳入版本控制。克隆仓库后本地安装工具并执行 `mcuenv.py registry init`。若团队需要共享二进制，可考虑 Git LFS、Release 附件或内部制品库。
+`tools/` 下各工具子目录（`arm-gnu-toolchain`、`cmake`、`ninja`、`openocd`、`pyocd`）、`packages/`、`manuals/`、`data/*.db` 默认不纳入版本控制。克隆仓库后本地安装工具并执行 `mcuenv.py registry init`。若团队需要共享二进制，可考虑 Git LFS、Release 附件或内部制品库。
 
 变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 

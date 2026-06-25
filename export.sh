@@ -8,6 +8,8 @@
 #   mcuenv.py build
 #   deactivate
 
+MCUENV_OLD_SHELL_OPTIONS="$(set +o)"
+trap 'eval "$MCUENV_OLD_SHELL_OPTIONS"; unset MCUENV_OLD_SHELL_OPTIONS' RETURN
 set -euo pipefail
 
 MCUENV_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,7 +42,7 @@ eval "$("$PYTHON" "$MCUENV_ROOT/mcuenv.py" export --format bash)"
 
 export MCUENV_OLD_PS1="${PS1:-}"
 MCUENV_PROMPT_BASH="$("$PYTHON" "$MCUENV_ROOT/mcuenv.py" prompt-segment --format bash | tr -d '\r\n')"
-export PS1="${MCUENV_PROMPT_BASH}${PS1}"
+export PS1="${MCUENV_PROMPT_BASH}${PS1:-}"
 
 deactivate() {
   eval "$("$PYTHON" "$MCUENV_ROOT/mcuenv.py" deactivate --format bash)"

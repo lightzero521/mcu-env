@@ -1,5 +1,9 @@
 # Bundled toolchains and binaries (large; install locally)
-tools/
+tools/arm-gnu-toolchain
+tools/cmake
+tools/ninja
+tools/openocd
+tools/pyocd
 
 # Vendor SDK packages (large; install locally)
 packages/**/*

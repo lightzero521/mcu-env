@@ -26,6 +26,9 @@
 - J-Link 进度回调：`action` / `progress_string` 为 `NULL` 时不再崩溃；取消回调使用空函数而非 `None`（避免 ctypes `ArgumentError`）。
 - `--verbose build`：适配 Ninja 将完整 gcc 命令与 `[n/m]` 打在同一行的输出格式。
 - `erase` / `flash`（J-Link）：捕获 `OSError`（含 DLL 位数不匹配）并打印友好错误。
+- **Linux / Bash**：`mcuenv-on` 提示符前缀改用 `\e`（Bash `PS1` 不解析 `\x1b`，此前会显示乱码）。
+- **Linux / Bash**：`export.sh` 激活结束后恢复 `errexit` / `nounset` / `pipefail`，避免 `mcuenv.py doctor` 等有失败项时退出码为 1 导致整个终端会话退出。
+- **Linux / Bash**：`export.sh` 在 `PS1` 未设置时不再因 `nounset` 报错；`bin/mcuenv.py` 启动器增加可执行权限。
 
 ### Notes
 

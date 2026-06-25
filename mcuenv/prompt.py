@@ -51,4 +51,4 @@ def format_prompt_segment() -> str:
 def format_prompt_bash() -> str:
     label = f"({PROMPT_PREFIX})"
     codes = _ansi_codes(PROMPT_STYLE)
-    return rf"\[\x1b[{codes}m\]{label}\[\x1b[0m\] "
+    return rf"\[\e[{codes}m\]{label}\[\e[0m\] "
