@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -142,3 +143,45 @@ def clean_project(
             [str(cmake), "--build", str(build_dir), "--target", "clean"],
             verbose=verbose,
         )
+
+
+def fullclean_project(
+    project_dir: Path | None = None,
+    *,
+    env: EnvManager | None = None,
+) -> int:
+    manager = env or EnvManager()
+    activation_error = EnvManager.require_active_shell(require_cross_compiler=True)
+    if activation_error:
+        print(activation_error, file=sys.stderr)
+        return 1
+
+    with CommandTimer("Fullclean"):
+        project = load_project_config(project_dir)
+        build_dir = project.root / project.build_dir
+        root = project.root.resolve()
+        resolved_build = build_dir.resolve()
+
+        if not resolved_build.is_relative_to(root):
+            print(
+                f"Refusing to delete build directory outside project root: {build_dir}",
+                file=sys.stderr,
+            )
+            return 1
+
+        if not build_dir.exists():
+            print(f"Build directory not found: {build_dir}")
+            return 0
+
+        try:
+            shutil.rmtree(build_dir)
+        except OSError as exc:
+            print(
+                f"Failed to remove build directory {build_dir}: {exc}\n"
+                "Close files under build/ (IDE, file explorer) and retry.",
+                file=sys.stderr,
+            )
+            return 1
+
+        print(f"Removed build directory: {build_dir}")
+        return 0

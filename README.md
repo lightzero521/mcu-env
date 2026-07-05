@@ -19,7 +19,8 @@
 | `list-targets` | 列出支持的 STM32 / GD32 目标预设 |
 | `set-target` | 为当前工程写入 `mcuenv.project.toml` |
 | `build` | CMake + Ninja 配置并编译 |
-| `clean` | 清理工程 build 目录 |
+| `clean` | 删除编译产物（保留 `build/` 内 CMake 缓存） |
+| `fullclean` | 删除整个 `build/` 目录（下次 build 重新 configure） |
 | `flash` | 按工程配置烧录 ELF（OpenOCD / pyOCD / J-Link） |
 | `erase` | 整片擦除 Flash（pyOCD / J-Link） |
 | `shell init` | 生成或安装 `mcuenv-on` 到 shell profile |
@@ -158,7 +159,7 @@ Run 'deactivate' when you want to leave this environment.
 (mcuenv) PS D:\your\project>          # Windows PowerShell
 ```
 
-`build` / `clean` / `flash` / `erase` / `doctor` **必须先 `mcuenv-on`**，子进程继承当前终端 PATH，不会自行注入环境。
+`build` / `clean` / `fullclean` / `flash` / `erase` / `doctor` **必须先 `mcuenv-on`**，子进程继承当前终端 PATH，不会自行注入环境。
 
 **Linux / Debian 说明：**
 
@@ -167,7 +168,7 @@ Run 'deactivate' when you want to leave this environment.
 - `bin/mcuenv.py` 在 Linux 上需有可执行权限；仓库内已设置 `+x`，克隆后可直接进 PATH 使用。
 - 本机路径与工具布局可在 `mcuenv.local.toml` 中覆盖（见下方配置说明），无需改仓库里的 `mcuenv.toml`。
 
-`build`、`clean`、`flash`、`erase` 完成后会打印耗时。`flash` / `erase`（J-Link）在 DLL 回调可用时显示进度条；`build` 默认输出 Ninja 的 `[n/m]` 步骤行（含 POST_BUILD 的 `size` 等）。
+`build`、`clean`、`fullclean`、`flash`、`erase` 完成后会打印耗时。`flash` / `erase`（J-Link）在 DLL 回调可用时显示进度条；`build` 默认输出 Ninja 的 `[n/m]` 步骤行（含 POST_BUILD 的 `size` 等）。
 
 **详细编译日志**（Keil 风格，仅显示 `compiling xxx.c`，不刷屏 gcc 命令行）：
 
@@ -201,6 +202,7 @@ mcuenv.py env-info
 mcuenv.py set-target stm32f103c8t6
 mcuenv.py build
 mcuenv.py flash
+mcuenv.py fullclean   # 改 CMakeLists / toolchain 后仍不生效时用
 mcuenv.py erase    # 需 [flash].tool 为 pyocd 或 jlink
 ```
 

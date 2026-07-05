@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from mcuenv import __version__
-from mcuenv.build import build_project, clean_project
+from mcuenv.build import build_project, clean_project, fullclean_project
 from mcuenv.config import apply_target_defaults, default_flash_image, find_project_root, load_project_config, write_project_config
 from mcuenv.doctor import print_doctor_report, run_doctor
 from mcuenv.erase import erase_project
@@ -127,8 +127,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Project directory (default: auto-detect)",
     )
 
-    clean_parser = subparsers.add_parser("clean", help="Clean the project build directory")
+    clean_parser = subparsers.add_parser(
+        "clean",
+        help="Remove build artifacts (keeps CMake cache in build/)",
+    )
     clean_parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=None,
+        help="Project directory (default: auto-detect)",
+    )
+
+    fullclean_parser = subparsers.add_parser(
+        "fullclean",
+        help="Delete entire build directory (CMake reconfigures on next build)",
+    )
+    fullclean_parser.add_argument(
         "--project-dir",
         type=Path,
         default=None,
@@ -307,6 +321,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "clean":
         return clean_project(args.project_dir, verbose=args.verbose, env=env)
+
+    if args.command == "fullclean":
+        return fullclean_project(args.project_dir, env=env)
 
     if args.command == "flash":
         try:
