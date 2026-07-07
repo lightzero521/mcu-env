@@ -126,6 +126,17 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Project directory (default: auto-detect)",
     )
+    build_mode = build_parser.add_mutually_exclusive_group()
+    build_mode.add_argument(
+        "--debug",
+        action="store_true",
+        help="Build with CMAKE_BUILD_TYPE=Debug (overrides [build].build_type)",
+    )
+    build_mode.add_argument(
+        "--release",
+        action="store_true",
+        help="Build with CMAKE_BUILD_TYPE=Release (overrides [build].build_type)",
+    )
 
     clean_parser = subparsers.add_parser(
         "clean",
@@ -317,7 +328,17 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_set_target(args, env)
 
     if args.command == "build":
-        return build_project(args.project_dir, verbose=args.verbose, env=env)
+        try:
+            return build_project(
+                args.project_dir,
+                verbose=args.verbose,
+                debug=args.debug,
+                release=args.release,
+                env=env,
+            )
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            return 1
 
     if args.command == "clean":
         return clean_project(args.project_dir, verbose=args.verbose, env=env)

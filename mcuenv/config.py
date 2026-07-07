@@ -27,6 +27,9 @@ from mcuenv.flash_config import (
 PROJECT_CONFIG_NAME = "mcuenv.project.toml"
 GLOBAL_CONFIG_NAME = "mcuenv.toml"
 
+CMAKE_BUILD_TYPES = frozenset({"Debug", "Release", "RelWithDebInfo", "MinSizeRel"})
+DEFAULT_BUILD_TYPE = "Debug"
+
 
 def default_flash_image(project: ProjectConfig) -> str:
     """Default firmware path relative to project root when [flash].image is empty."""
@@ -50,6 +53,7 @@ class ProjectConfig:
     name: str = "firmware"
     target: str = ""
     build_dir: str = "build"
+    build_type: str = DEFAULT_BUILD_TYPE
     linker_script: str = ""
     toolchain_file: str = ""
     pre_build: list[str] = field(default_factory=list)
@@ -78,6 +82,18 @@ def _toml_string_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value]
     return [str(value)]
+
+
+def normalize_build_type(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        return DEFAULT_BUILD_TYPE
+    if normalized not in CMAKE_BUILD_TYPES:
+        allowed = ", ".join(sorted(CMAKE_BUILD_TYPES))
+        raise ValueError(
+            f"Invalid build_type '{value}'. Use one of: {allowed}."
+        )
+    return normalized
 
 
 def detect_root(start: Path | None = None) -> Path:
@@ -184,6 +200,7 @@ def load_project_config(project_root: Path | None = None) -> ProjectConfig:
         name=project.get("name", "firmware"),
         target=project.get("target", ""),
         build_dir=build.get("build_dir", "build"),
+        build_type=normalize_build_type(str(build.get("build_type", DEFAULT_BUILD_TYPE))),
         linker_script=str(build.get("linker_script", "")),
         toolchain_file=str(build.get("toolchain_file", "")),
         pre_build=_toml_string_list(build.get("pre_build")),
@@ -249,6 +266,8 @@ def write_project_config(project: ProjectConfig) -> None:
         "[build]",
         "# CMake 构建输出目录",
         f'build_dir = "{project.build_dir}"',
+        "# CMake 构建类型：Debug | Release | RelWithDebInfo | MinSizeRel",
+        f'build_type = "{project.build_type}"',
         "# 工程 toolchain（相对工程根）；留空则按 chip cpu 或 mcuenv.toml fallback",
         f'toolchain_file = "{project.toolchain_file}"',
         "# 链接脚本（相对工程根）；留空则不注入，由 CMakeLists 指定",

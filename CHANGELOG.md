@@ -9,6 +9,7 @@
 ### Added
 
 - `mcuenv.py fullclean`：删除整个 `[build].build_dir`（含 CMake 缓存），行为对齐 ESP-IDF `idf.py fullclean`；`clean` 仍为 `cmake --build --target clean`。
+- `mcuenv.py build --debug` / `--release`：覆盖 `[build].build_type`，传入 `-DCMAKE_BUILD_TYPE`（默认读 TOML）。
 - 工程 `mcuenv.project.toml` 分 backend 的 `[flash]` / `[flash.jlink]` / `[flash.openocd]` / `[flash.pyocd]` 配置（`flash_config.py`）。
 - J-Link 烧录/擦除：`jlink_dll.py` 通过 ctypes 调用 SEGGER DLL（`JLINK_DownloadFile`、`JLINK_EraseChip`），烧录/擦除进度条来自 DLL 回调。
 - `mcuenv.py erase`：支持 pyOCD（`erase --chip`）与 J-Link（整片擦除）。

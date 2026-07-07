@@ -48,10 +48,25 @@ def _run_project_script(
     return run_command(command, verbose=verbose, cwd=project.root)
 
 
+def _resolve_build_type(
+    project: ProjectConfig,
+    *,
+    debug: bool,
+    release: bool,
+) -> str:
+    if debug:
+        return "Debug"
+    if release:
+        return "Release"
+    return project.build_type
+
+
 def build_project(
     project_dir: Path | None = None,
     *,
     verbose: bool = False,
+    debug: bool = False,
+    release: bool = False,
     env: EnvManager | None = None,
 ) -> int:
     manager = env or EnvManager()
@@ -62,6 +77,7 @@ def build_project(
 
     with CommandTimer("Build"):
         project = load_project_config(project_dir)
+        build_type = _resolve_build_type(project, debug=debug, release=release)
         build_dir = project.root / project.build_dir
         cpu = _resolve_cpu(project, manager)
         toolchain_file = resolve_toolchain_for_build(
@@ -80,6 +96,7 @@ def build_project(
 
         if verbose:
             print(f"Toolchain: {toolchain_file}" + (f" (cpu={cpu})" if cpu else ""), flush=True)
+            print(f"Build type: {build_type}", flush=True)
 
         configure_args = [
             str(cmake),
@@ -90,6 +107,7 @@ def build_project(
             "-G",
             CMAKE_GENERATOR,
             f"-DCMAKE_TOOLCHAIN_FILE={toolchain_file}",
+            f"-DCMAKE_BUILD_TYPE={build_type}",
         ]
         if project.linker_script:
             linker = Path(project.linker_script)

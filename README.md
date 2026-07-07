@@ -201,6 +201,7 @@ mcuenv.py env-info
 ```bash
 mcuenv.py set-target stm32f103c8t6
 mcuenv.py build
+mcuenv.py build --release
 mcuenv.py flash
 mcuenv.py fullclean   # 改 CMakeLists / toolchain 后仍不生效时用
 mcuenv.py erase    # 需 [flash].tool 为 pyocd 或 jlink
@@ -216,6 +217,8 @@ target = "stm32f103c8t6"
 [build]
 # CMake 构建输出目录
 build_dir = "build"
+# CMake 构建类型：Debug | Release | RelWithDebInfo | MinSizeRel
+build_type = "Debug"
 # 工程 toolchain（相对工程根）；留空则按 chip cpu 或 mcuenv.toml fallback
 toolchain_file = ""
 # 链接脚本（相对工程根）；留空则不注入，由 CMakeLists 指定
@@ -267,6 +270,8 @@ pyocd_target = "stm32f103c8"
 ```
 
 默认烧录 `[flash].image` 所指文件；`set-target` 会写入 `build/<项目名>.elf`。`image` 留空时按 `build_dir` 与 `[project].name` 推导。linker 脚本内容手改文件，TOML 只写路径。
+
+`build` 默认使用 `[build].build_type` 作为 `-DCMAKE_BUILD_TYPE`；可用 `--debug` / `--release` 临时覆盖。切换构建类型后若编译选项未生效，先 `fullclean` 再 `build`。
 
 ## 内置芯片（SQLite）
 
