@@ -12,6 +12,7 @@
 - `mcuenv.py build --debug` / `--release`：覆盖 `[build].build_type`，传入 `-DCMAKE_BUILD_TYPE`（默认读 TOML）。
 - 工程 `mcuenv.project.toml` 分 backend 的 `[flash]` / `[flash.jlink]` / `[flash.openocd]` / `[flash.pyocd]` 配置（`flash_config.py`）。
 - J-Link 烧录/擦除：`jlink_dll.py` 通过 ctypes 调用 SEGGER DLL（`JLINK_DownloadFile`、`JLINK_EraseChip`），烧录/擦除进度条来自 DLL 回调。
+- `[flash.jlink].ip`：连接 J-Link Remote Server（`host` 或 `host:port`，默认端口 19020）；空字符串仍用本地 USB。
 - `mcuenv.py erase`：支持 pyOCD（`erase --chip`）与 J-Link（整片擦除）。
 - `mcuenv.py -v` / `--verbose`：`build` 时对 `cmake --build` 加 `--verbose`；编译输出 Keil 风格（`compiling foo.c`），隐藏完整 gcc 命令行；`clean` 打印执行的 cmake 命令。
 - `set-target` 写出完整 `[build]` 模板与 `[flash].image`（默认 `build/<项目名>.elf`）。

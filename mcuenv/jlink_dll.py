@@ -14,6 +14,7 @@ from mcuenv.util import FlashProgressBar, is_windows
 MAX_ERR_BUF = 336
 TIF_JTAG = 0
 TIF_SWD = 1
+DEFAULT_REMOTE_PORT = 19020
 
 RESET_STRATEGIES = {
     "normal": 0,
@@ -60,6 +61,34 @@ def _windows_jlink_dll_names() -> tuple[str, ...]:
     if _python_bitness() == 64:
         return ("JLink_x64.dll", "JLinkARM.dll")
     return ("JLinkARM.dll",)
+
+
+def _parse_remote_endpoint(ip: str) -> tuple[str, int]:
+    """Parse host or host:port for J-Link Remote Server (default port 19020)."""
+    value = ip.strip()
+    if not value:
+        raise ValueError("Remote J-Link ip must not be empty.")
+
+    if value.count(":") == 1:
+        host, _, port_text = value.partition(":")
+        host = host.strip()
+        port_text = port_text.strip()
+        if not host:
+            raise ValueError(f"Invalid J-Link remote address '{ip}'.")
+        if not port_text:
+            return host, DEFAULT_REMOTE_PORT
+        try:
+            port = int(port_text)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid J-Link remote port in '{ip}'. Use host or host:port."
+            ) from exc
+        if port <= 0 or port > 65535:
+            raise ValueError(f"J-Link remote port out of range in '{ip}'.")
+        return host, port
+
+    # IPv6 or tunnel strings without an explicit trailing :port keep the default port.
+    return value, DEFAULT_REMOTE_PORT
 
 
 def resolve_jlink_dll(configured_dir: Path | None) -> JLinkDllPaths:
@@ -120,6 +149,8 @@ class JLinkSession:
     def _configure_dll(self) -> None:
         dll = self._dll
         dll.JLINKARM_OpenEx.restype = ctypes.POINTER(ctypes.c_char)
+        dll.JLINKARM_SelectIP.argtypes = [ctypes.c_char_p, ctypes.c_uint32]
+        dll.JLINKARM_SelectIP.restype = ctypes.c_int
         dll.JLINKARM_ExecCommand.argtypes = [
             ctypes.c_char_p,
             ctypes.c_char_p,
@@ -155,12 +186,22 @@ class JLinkSession:
     def _clear_progress_callback(self) -> None:
         self._dll.JLINK_SetFlashProgProgressCallback(_noop_progress)
 
-    def open(self, *, serial: str = "") -> None:
+    def open(self, *, serial: str = "", ip: str = "") -> None:
         if self._opened:
             return
 
         dll = self._dll
-        if serial:
+        if ip:
+            try:
+                host, port = _parse_remote_endpoint(ip)
+            except ValueError as exc:
+                raise JLinkDllError(str(exc)) from exc
+            result = dll.JLINKARM_SelectIP(host.encode("utf-8"), port)
+            if result != 0:
+                raise JLinkDllError(
+                    f"Could not select J-Link Remote Server at {host}:{port}."
+                )
+        elif serial:
             result = dll.JLINKARM_EMU_SelectByUSBSN(int(serial))
             if result < 0:
                 raise JLinkDllError(f"No J-Link with serial number {serial}.")
@@ -300,7 +341,7 @@ def run_jlink_flash(
 ) -> None:
     paths = resolve_jlink_dll(configured_dir)
     with JLinkSession(paths) as session:
-        session.open(serial=config.serial)
+        session.open(serial=config.serial, ip=config.ip)
         session.connect(config)
         session.flash_file(firmware, after_program=after_program)
 
@@ -312,6 +353,6 @@ def run_jlink_erase(
 ) -> None:
     paths = resolve_jlink_dll(configured_dir)
     with JLinkSession(paths) as session:
-        session.open(serial=config.serial)
+        session.open(serial=config.serial, ip=config.ip)
         session.connect(config)
         session.erase_chip()

@@ -16,6 +16,7 @@ class FlashJlinkConfig:
     interface: str
     speed_khz: int
     serial: str
+    ip: str
     reset_strategy: str
     script: str
 
@@ -55,6 +56,7 @@ def default_jlink_config() -> FlashJlinkConfig:
         interface="swd",
         speed_khz=4000,
         serial="",
+        ip="",
         reset_strategy="",
         script="",
     )
@@ -87,6 +89,7 @@ def jlink_config_from_mapping(data: dict[str, Any] | None) -> FlashJlinkConfig:
         interface=str(section.get("interface", "swd")).lower(),
         speed_khz=int(section.get("speed_khz", 4000) or 4000),
         serial=str(section.get("serial", "")),
+        ip=str(section.get("ip", "")).strip(),
         reset_strategy=str(section.get("reset_strategy", "")),
         script=str(section.get("script", "")),
     )
@@ -120,6 +123,7 @@ def jlink_config_from_preset(preset: TargetPreset) -> FlashJlinkConfig:
         interface="swd",
         speed_khz=4000,
         serial="",
+        ip="",
         reset_strategy="",
         script="",
     )
@@ -153,6 +157,7 @@ def _merge_jlink(project: FlashJlinkConfig, preset: FlashJlinkConfig | None) -> 
         interface=project.interface or preset.interface,
         speed_khz=project.speed_khz if project.speed_khz else preset.speed_khz,
         serial=project.serial or preset.serial,
+        ip=project.ip or preset.ip,
         reset_strategy=project.reset_strategy or preset.reset_strategy,
         script=project.script or preset.script,
     )

@@ -163,7 +163,8 @@ def _flash_jlink(
         jlink = settings.jlink
         print(
             f"J-Link flash: device={jlink.device}, interface={jlink.interface}, "
-            f"speed={jlink.speed_khz} kHz, image={firmware}",
+            f"speed={jlink.speed_khz} kHz, ip={jlink.ip or '(local USB)'}, "
+            f"image={firmware}",
             flush=True,
         )
     try:
@@ -237,6 +238,7 @@ def describe_flash_settings(project: ProjectConfig, env: EnvManager) -> dict[str
         "jlink_device": settings.jlink.device,
         "jlink_interface": settings.jlink.interface,
         "jlink_speed_khz": str(settings.jlink.speed_khz),
+        "jlink_ip": settings.jlink.ip or "(local USB)",
         "openocd_adapter": settings.openocd.adapter,
         "openocd_target": settings.openocd.target,
         "pyocd_target": settings.pyocd.target,

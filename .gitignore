@@ -36,6 +36,7 @@ Thumbs.db
 
 # Local overrides
 mcuenv.local.toml
+mcuenv.toml
 
 # SQLite registry database
 data/*.db

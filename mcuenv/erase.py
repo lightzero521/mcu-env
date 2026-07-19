@@ -47,7 +47,7 @@ def _erase_jlink(
         jlink = settings.jlink
         print(
             f"J-Link erase: device={jlink.device}, interface={jlink.interface}, "
-            f"speed={jlink.speed_khz} kHz",
+            f"speed={jlink.speed_khz} kHz, ip={jlink.ip or '(local USB)'}",
             flush=True,
         )
     try:
